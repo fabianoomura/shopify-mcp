@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mooui-shopify-mcp"
+version = "1.18.0"
+description = "Servidor MCP seguro para a Shopify Admin GraphQL API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27,<1",
+  "jsonschema>=4.20,<5",
+  "mcp>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "respx>=0.22,<1"]
+
+[project.scripts]
+shopify-mcp = "shopify_mcp.server:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shopify_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--basetemp=.pytest-tmp"

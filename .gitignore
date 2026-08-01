@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+*.py[cod]
+dist/
+build/
+*.egg-info/
+data/
+
+# Conteúdo operacional privado da loja — NÃO publicar
+CLAUDE.md
+docs/MOOUI_PLAYBOOK.md
+docs/RUNBOOK_lancamento.md
+docs/RUNBOOK_tags_campanha.md
+scripts/
