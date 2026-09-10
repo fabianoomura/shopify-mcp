@@ -10,7 +10,7 @@ def names(profile, writes):
 
 
 def test_readonly_never_exposes_mutations():
-    assert len(names("readonly", False)) == 73
+    assert len(names("readonly", False)) == 74
     assert all(not item.write for item in enabled_definitions("readonly", False))
     assert all(not item.write for item in enabled_definitions("readonly", True))
 

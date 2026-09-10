@@ -28,7 +28,7 @@ Esta matriz mede cobertura operacional, não quantidade bruta de campos GraphQL.
 
 ## Baseline 1.17
 
-- 73 tools de leitura no perfil padrão.
+- 74 tools de leitura no perfil padrão.
 - 218 tools no total implementadas (73 leituras gerais, 72 preparações e 73 aplicações).
 - Tags e SEO usam preview before/after, token assinado, expiração e proteção contra replay/adulteração.
 - Criação e atualização geral de produto seguem o mesmo fluxo forte; variantes e publicação permanecem separadas.

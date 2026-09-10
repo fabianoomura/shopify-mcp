@@ -21,6 +21,8 @@ def test_bulk_documents_are_curated_and_escape_search_input():
     assert "bulkOperationRunQuery" not in document
     assert '\\"x\\"' in document
     assert document.startswith("{products(")
+    assert "requiresComponents" in document
+    assert "productVariantComponents{edges{node{quantity productVariant{id sku title price product{id title handle}}}}}" in document
 
 
 def test_bulk_metaobjects_require_type_and_reject_it_elsewhere():
@@ -76,6 +78,16 @@ async def test_bulk_import_uses_only_curated_mutation_and_binds_declared_hash():
 
 
 @pytest.mark.asyncio
+async def test_bulk_export_pii_guard_requires_full_profile():
+    ops = ShopifyOperations(SequenceClient([]))
+    proposal = await ops.prepare_bulk_export({"resource": "PRODUCTS"})
+    assert "confirmationToken" in proposal
+    assert "confirmationToken" in await ops.prepare_bulk_export({"resource": "ORDERS"})
+    with pytest.raises(ShopifyError, match="full"):
+        await ops.prepare_bulk_export({"resource": "CUSTOMERS"})
+
+
+@pytest.mark.asyncio
 async def test_bulk_import_stage_has_fixed_media_contract():
     target = {"url": "https://shopify-staged-uploads.storage.googleapis.com", "resourceUrl": None, "parameters": [{"name": "key", "value": "tmp/1/input"}]}
     client = SequenceClient([{"data": {"stagedUploadsCreate": {"stagedTargets": [target], "userErrors": []}}}])
@@ -86,3 +98,20 @@ async def test_bulk_import_stage_has_fixed_media_contract():
     assert result["stagedTargets"] == [target]
     staged = client.calls[0][1]["input"][0]
     assert staged == {"filename": "input.jsonl", "mimeType": "text/jsonl", "resource": "BULK_MUTATION_VARIABLES", "httpMethod": "POST", "fileSize": "120"}
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_supports_variants_bulk_update():
+    created = {"id": "gid://shopify/BulkOperation/77", "type": "MUTATION", "status": "CREATED"}
+    client = SequenceClient([{"data": {"bulkOperationRunMutation": {"bulkOperation": created, "userErrors": []}}}])
+    ops = ShopifyOperations(client)
+    request = {"kind": "PRODUCT_VARIANTS_BULK_UPDATE", "stagedUploadPath": "tmp/1/bulk/job/variants.jsonl",
+               "clientIdentifier": "barcode-fix", "lineCount": 85, "sha256": "b" * 64,
+               "acknowledgeUnorderedExecution": True}
+    proposal = await ops.prepare_bulk_import(request)
+    assert proposal["variablesPerJsonlLine"]["productId"] == "ID!"
+    result = await ops.start_bulk_import({**request, "confirmationToken": proposal["confirmationToken"]})
+    assert result["bulkOperation"] == created
+    sent = client.calls[0][1]["mutation"]
+    assert "productVariantsBulkUpdate" in sent
+    assert "allowPartialUpdates:false" in sent

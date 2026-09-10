@@ -15,7 +15,7 @@ Servidor MCP para a Shopify Admin GraphQL API. O projeto nasce isolado: nenhum `
 
 ## Cobertura atual
 
-A versão 1.18.0 oferece 220 tools curadas: 73 leituras, 73 preparações e 74 aplicações. Cobre loja/scopes, produtos, variantes/opções, coleções, inventário/locais (incl. peso de itens de estoque), clientes, pedidos, fulfillment, returns/refunds, draft orders, descontos, páginas/blogs/artigos, menus/redirects, metafields/metaobjects, arquivos/mídia, publicações, Markets/catálogos/price lists, webhooks e Bulk Operations.
+A versão atual oferece 221 tools curadas: 74 leituras, 73 preparações e 74 aplicações. Cobre loja/scopes, produtos, variantes/opções, coleções, inventário/locais (incl. peso de itens de estoque), clientes, pedidos, fulfillment, returns/refunds, draft orders, descontos, páginas/blogs/artigos, menus/redirects, metafields/metaobjects, arquivos/mídia, publicações, Markets/catálogos/price lists, webhooks e Bulk Operations.
 
 Views compostas entregam produto 360, pedido 360, baixo estoque e auditoria de qualidade cadastral/SEO. Bulk exporta sete domínios e importa cinco tipos de mutation conhecidos sem expor GraphQL arbitrário.
 

@@ -80,6 +80,11 @@ class ShopifyOperations:
         scopes = sorted(installation.get("accessScopes") or [], key=lambda item: item["handle"])
         return {"appInstallationId": installation["id"], "scopes": scopes, "count": len(scopes)}
 
+    async def shopifyql_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = """query ShopifyQL($q:String!){shopifyqlQuery(query:$q){__typename parseErrors tableData{columns{name dataType displayName} rows}}}"""
+        result = await self.client.graphql(query, {"q": args["query"]})
+        return {"shopifyql": result["data"]["shopifyqlQuery"]}
+
     async def list_publications(self, args: dict[str, Any]) -> dict[str, Any]:
         query = """query Publications($first:Int!,$after:String){publications(first:$first,after:$after){edges{cursor node{id name autoPublish supportsFuturePublishing catalog{__typename id title} includedProductsCount{count}}}pageInfo{hasNextPage endCursor}}}"""
         result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after")})
@@ -101,17 +106,17 @@ class ShopifyOperations:
         return _connection(result["data"], "productVendors")
 
     async def list_products(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query Products($first:Int!,$after:String,$query:String){products(first:$first,after:$after,query:$query,sortKey:UPDATED_AT,reverse:true){edges{cursor node{id title handle status vendor productType tags updatedAt totalInventory seo{title description} featuredMedia{preview{image{url altText}}} variants(first:20){nodes{id title sku barcode price compareAtPrice inventoryQuantity}}}}pageInfo{hasNextPage endCursor}}}"""
+        query = """query Products($first:Int!,$after:String,$query:String){products(first:$first,after:$after,query:$query,sortKey:UPDATED_AT,reverse:true){edges{cursor node{id title handle status vendor productType tags updatedAt totalInventory seo{title description} featuredMedia{preview{image{url altText}}} variants(first:20){nodes{id title sku barcode price compareAtPrice inventoryQuantity requiresComponents}}}}pageInfo{hasNextPage endCursor}}}"""
         result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after"), "query": args.get("query")})
         return _connection(result["data"], "products")
 
     async def get_product(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query Product($id:ID!){product(id:$id){id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{title description} category{id fullName} media(first:20){nodes{mediaContentType alt preview{image{url}}}} variants(first:100){nodes{id title sku barcode price compareAtPrice inventoryQuantity inventoryItem{id tracked} selectedOptions{name value}}} collections(first:50){nodes{id title handle}}}}"""
+        query = """query Product($id:ID!){product(id:$id){id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{title description} category{id fullName} media(first:20){nodes{mediaContentType alt preview{image{url}}}} variants(first:100){nodes{id title sku barcode price compareAtPrice inventoryQuantity inventoryItem{id tracked} selectedOptions{name value} requiresComponents productVariantComponents(first:25){nodes{id quantity productVariant{id title sku price product{id title handle}}}}}} collections(first:50){nodes{id title handle}}}}"""
         result = await self.client.graphql(query, {"id": args["id"]})
         return {"product": result["data"]["product"]}
 
     async def get_product_by_handle(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query ProductByHandle($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{title description} category{id fullName} options{id name position optionValues{id name hasVariants}} variants(first:100){nodes{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value}}}}}"""
+        query = """query ProductByHandle($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{title description} category{id fullName} options{id name position optionValues{id name hasVariants}} variants(first:100){nodes{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value} requiresComponents productVariantComponents(first:25){nodes{id quantity productVariant{id title sku price product{id title handle}}}}}}}}"""
         result = await self.client.graphql(query, {"identifier": {"handle": args["handle"]}})
         return {"product": result["data"]["productByIdentifier"]}
 
@@ -121,7 +126,7 @@ class ShopifyOperations:
         return {"productsCount": result["data"]["productsCount"]}
 
     async def get_product_360(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query Product360($id:ID!,$first:Int!,$after:String){product(id:$id){id title handle descriptionHtml status vendor productType tags templateSuffix createdAt updatedAt totalInventory tracksInventory requiresSellingPlan seo{title description} category{id fullName} options{id name position optionValues{id name hasVariants}} media(first:50){nodes{id mediaContentType alt status preview{status image{url altText}}}} collections(first:50){nodes{id title handle}} metafields(first:100){nodes{id namespace key type value compareDigest updatedAt}} resourcePublicationsV2(first:50){nodes{isPublished publishDate publication{id name autoPublish}}} variants(first:$first,after:$after){edges{cursor node{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale selectedOptions{name value} inventoryItem{id tracked requiresShipping measurement{weight{value unit}} inventoryLevels(first:20){nodes{id location{id name isActive} quantities(names:[\"available\",\"on_hand\",\"committed\",\"reserved\",\"incoming\"]){name quantity}}}}}}pageInfo{hasNextPage endCursor}}}}"""
+        query = """query Product360($id:ID!,$first:Int!,$after:String){product(id:$id){id title handle descriptionHtml status vendor productType tags templateSuffix createdAt updatedAt totalInventory tracksInventory requiresSellingPlan seo{title description} category{id fullName} options{id name position optionValues{id name hasVariants}} media(first:50){nodes{id mediaContentType alt status preview{status image{url altText}}}} collections(first:50){nodes{id title handle}} metafields(first:100){nodes{id namespace key type value compareDigest updatedAt}} resourcePublicationsV2(first:50){nodes{isPublished publishDate publication{id name autoPublish}}} variants(first:$first,after:$after){edges{cursor node{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale requiresComponents productVariantComponents(first:25){nodes{id quantity productVariant{id title sku price product{id title handle}}}} selectedOptions{name value} inventoryItem{id tracked requiresShipping measurement{weight{value unit}} inventoryLevels(first:20){nodes{id location{id name isActive} quantities(names:[\"available\",\"on_hand\",\"committed\",\"reserved\",\"incoming\"]){name quantity}}}}}}pageInfo{hasNextPage endCursor}}}}"""
         result = await self.client.graphql(query, {"id": args["id"], "first": min(int(args.get("variantFirst", 25)), 50), "after": args.get("variantAfter")})
         product = result["data"]["product"]
         return {"product": product, "limits": {"variants": 50, "inventoryLevelsPerVariant": 20, "metafields": 100, "media": 50, "collections": 50, "publications": 50}, "complete": bool(product is None or not product["variants"]["pageInfo"]["hasNextPage"])}
@@ -145,17 +150,17 @@ class ShopifyOperations:
         return {"items": audited, "summary": {"productsAudited": len(audited), "productsWithIssues": sum(bool(item["issues"]) for item in audited), "issueCounts": totals}, "pageInfo": connection["pageInfo"], "limits": {"variantsPerProduct": 100}}
 
     async def list_product_variants(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query ProductVariants($first:Int!,$after:String,$query:String){productVariants(first:$first,after:$after,query:$query,sortKey:UPDATED_AT,reverse:true){edges{cursor node{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale createdAt updatedAt product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value}}}pageInfo{hasNextPage endCursor}}}"""
+        query = """query ProductVariants($first:Int!,$after:String,$query:String){productVariants(first:$first,after:$after,query:$query,sortKey:RELEVANCE){edges{cursor node{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale createdAt updatedAt product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value} requiresComponents}}pageInfo{hasNextPage endCursor}}}"""
         result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after"), "query": args.get("query")})
         return _connection(result["data"], "productVariants")
 
     async def get_product_variant(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query ProductVariant($id:ID!){productVariant(id:$id){id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale createdAt updatedAt product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value} media(first:20){nodes{id mediaContentType alt preview{image{url}}}}}}"""
+        query = """query ProductVariant($id:ID!){productVariant(id:$id){id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale createdAt updatedAt product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value} requiresComponents productVariantComponents(first:25){nodes{id quantity productVariant{id title sku price product{id title handle}}}} media(first:20){nodes{id mediaContentType alt preview{image{url}}}}}}"""
         result = await self.client.graphql(query, {"id": args["id"]})
         return {"variant": result["data"]["productVariant"]}
 
     async def get_product_variant_by_sku(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query VariantBySku($query:String!){productVariants(first:2,query:$query){nodes{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value}}}}"""
+        query = """query VariantBySku($query:String!){productVariants(first:2,query:$query){nodes{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale product{id title handle status} inventoryItem{id tracked requiresShipping measurement{weight{value unit}}} selectedOptions{name value} requiresComponents productVariantComponents(first:25){nodes{id quantity productVariant{id title sku price product{id title handle}}}}}}}"""
         result = await self.client.graphql(query, {"query": _search_exact("sku", args["sku"])})
         variants = result["data"]["productVariants"]["nodes"]
         if len(variants) > 1:
@@ -168,7 +173,7 @@ class ShopifyOperations:
         return _connection(result["data"], "orders")
 
     async def get_order(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query Order($id:ID!){order(id:$id){id name createdAt updatedAt processedAt closedAt cancelledAt cancelReason confirmed test note poNumber email phone displayFinancialStatus displayFulfillmentStatus currencyCode subtotalPriceSet{shopMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode}} totalShippingPriceSet{shopMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode}} currentTotalPriceSet{shopMoney{amount currencyCode}} currentTotalRefundedSet{shopMoney{amount currencyCode}} customer{id displayName email phone} billingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} shippingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} discountCodes customAttributes{key value} shippingLines(first:20){nodes{id title code source discountedPriceSet{shopMoney{amount currencyCode}}}} lineItems(first:100){nodes{id name sku quantity currentQuantity refundableQuantity unfulfilledQuantity originalUnitPriceSet{shopMoney{amount currencyCode}} discountedTotalSet{shopMoney{amount currencyCode}} product{id title handle} variant{id title sku}}} fulfillments{id status createdAt updatedAt deliveredAt trackingInfo{company number url}} tags}}"""
+        query = """query Order($id:ID!){order(id:$id){id name createdAt updatedAt processedAt closedAt cancelledAt cancelReason confirmed test note poNumber email phone displayFinancialStatus displayFulfillmentStatus currencyCode subtotalPriceSet{shopMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode}} totalShippingPriceSet{shopMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode}} currentTotalPriceSet{shopMoney{amount currencyCode}} totalRefundedSet{shopMoney{amount currencyCode}} customer{id displayName email phone metafields(first:50){nodes{namespace key value}}} billingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone company} shippingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone company} localizationExtensions(first:20){nodes{countryCode purpose title value}} metafields(first:50){nodes{namespace key value}} discountCodes discountApplications(first:30){nodes{__typename targetType allocationMethod value{__typename ... on MoneyV2{amount currencyCode} ... on PricingPercentageValue{percentage}} ... on DiscountCodeApplication{code} ... on AutomaticDiscountApplication{title} ... on ManualDiscountApplication{title} ... on ScriptDiscountApplication{title}}} customAttributes{key value} shippingLines(first:20){nodes{id title code source discountedPriceSet{shopMoney{amount currencyCode}}}} lineItems(first:100){nodes{id name sku quantity currentQuantity refundableQuantity unfulfilledQuantity originalUnitPriceSet{shopMoney{amount currencyCode}} discountedTotalSet{shopMoney{amount currencyCode}} product{id title handle} variant{id title sku}}} fulfillments{id status createdAt updatedAt deliveredAt trackingInfo{company number url}} tags}}"""
         result = await self.client.graphql(query, {"id": args["id"]})
         return {"order": result["data"]["order"]}
 
@@ -178,7 +183,7 @@ class ShopifyOperations:
         return {"ordersCount": result["data"]["ordersCount"]}
 
     async def get_order_financials(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query OrderFinancials($id:ID!){order(id:$id){id name displayFinancialStatus netPaymentSet{shopMoney{amount currencyCode}} totalCapturableSet{shopMoney{amount currencyCode}} totalReceivedSet{shopMoney{amount currencyCode}} currentTotalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){id createdAt processedAt kind status gateway formattedGateway amountSet{shopMoney{amount currencyCode}} parentTransaction{id} errorCode receiptJson} riskSummary{assessments{riskLevel}} refunds{id createdAt note totalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){nodes{id kind status gateway amountSet{shopMoney{amount currencyCode}}}} refundLineItems(first:100){nodes{quantity restockType subtotalSet{shopMoney{amount currencyCode}} lineItem{id name sku}}}} returns(first:100){nodes{id name status createdAt closedAt totalQuantity}}}}"""
+        query = """query OrderFinancials($id:ID!){order(id:$id){id name displayFinancialStatus netPaymentSet{shopMoney{amount currencyCode}} totalCapturableSet{shopMoney{amount currencyCode}} totalReceivedSet{shopMoney{amount currencyCode}} totalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){id createdAt processedAt kind status gateway formattedGateway amountSet{shopMoney{amount currencyCode}} parentTransaction{id} errorCode receiptJson} refunds{id createdAt note totalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){nodes{id kind status gateway amountSet{shopMoney{amount currencyCode}}}} refundLineItems(first:100){nodes{quantity restockType subtotalSet{shopMoney{amount currencyCode}} lineItem{id name sku}}}} returns(first:100){nodes{id name status createdAt closedAt totalQuantity}}}}"""
         result = await self.client.graphql(query, {"id": args["id"]})
         return {"order": result["data"]["order"]}
 
@@ -314,7 +319,7 @@ class ShopifyOperations:
         }
 
     async def prepare_order_cancel(self, args: dict[str, Any]) -> dict[str, Any]:
-        result = await self.client.graphql("""query OrderCancelPreview($id:ID!){order(id:$id){id name cancelledAt cancelReason test confirmed displayFinancialStatus displayFulfillmentStatus currentTotalPriceSet{shopMoney{amount currencyCode}} netPaymentSet{shopMoney{amount currencyCode}} currentTotalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){id kind status gateway amountSet{shopMoney{amount currencyCode}}} fulfillmentOrders(first:100){nodes{id status requestStatus assignedLocation{name location{id name isActive}}}} returns(first:100){nodes{id name status totalQuantity}}}}""", {"id": args["orderId"]})
+        result = await self.client.graphql("""query OrderCancelPreview($id:ID!){order(id:$id){id name cancelledAt cancelReason test confirmed displayFinancialStatus displayFulfillmentStatus currentTotalPriceSet{shopMoney{amount currencyCode}} netPaymentSet{shopMoney{amount currencyCode}} totalRefundedSet{shopMoney{amount currencyCode}} transactions(first:100){id kind status gateway amountSet{shopMoney{amount currencyCode}}} fulfillmentOrders(first:100){nodes{id status requestStatus assignedLocation{name location{id name isActive}}}} returns(first:100){nodes{id name status totalQuantity}}}}""", {"id": args["orderId"]})
         order = result["data"]["order"]
         if order is None:
             raise ShopifyError("Pedido não encontrado")
@@ -402,7 +407,7 @@ class ShopifyOperations:
     async def create_refund(self, args: dict[str, Any]) -> dict[str, Any]:
         mutation_args = {"input": self._refund_input(args), "idempotencyKey": args["idempotencyKey"]}
         self._require_write(args, "shopify_create_refund", mutation_args)
-        query = """mutation RefundCreate($input:RefundInput!,$idempotencyKey:String!){refundCreate(input:$input) @idempotent(key:$idempotencyKey){order{id name displayFinancialStatus currentTotalRefundedSet{shopMoney{amount currencyCode}}} refund{id createdAt note totalRefundedSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} refundLineItems(first:100){nodes{quantity restockType location{id name} lineItem{id name sku}}} transactions(first:100){nodes{id kind status gateway amountSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}}}} userErrors{field message}}}"""
+        query = """mutation RefundCreate($input:RefundInput!,$idempotencyKey:String!){refundCreate(input:$input) @idempotent(key:$idempotencyKey){order{id name displayFinancialStatus totalRefundedSet{shopMoney{amount currencyCode}}} refund{id createdAt note totalRefundedSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} refundLineItems(first:100){nodes{quantity restockType location{id name} lineItem{id name sku}}} transactions(first:100){nodes{id kind status gateway amountSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}}}} userErrors{field message}}}"""
         result = await self.client.graphql(query, mutation_args)
         return {"success": True, "operation": "refundCreate", "idempotencyKey": args["idempotencyKey"], **mutation_result(result, "refundCreate")}
 
@@ -469,7 +474,7 @@ class ShopifyOperations:
         return _connection(result["data"], "draftOrders")
 
     async def get_draft_order(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query DraftOrder($id:ID!){draftOrder(id:$id){id name status createdAt updatedAt completedAt invoiceSentAt invoiceUrl email note2 currencyCode presentmentCurrencyCode taxesIncluded taxExempt subtotalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} customer{id displayName email phone} shippingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} billingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} lineItems(first:250){nodes{id name sku quantity originalUnitPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} discountedTotalSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} product{id title} variant{id title sku}}} appliedDiscount{title description value valueType amountSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}} discountCodes{code applicable rejectionReason} shippingLine{title custom originalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}} tags order{id name}}}"""
+        query = """query DraftOrder($id:ID!){draftOrder(id:$id){id name status createdAt updatedAt completedAt invoiceSentAt invoiceUrl email note2 currencyCode presentmentCurrencyCode taxesIncluded taxExempt subtotalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} customer{id displayName email phone} shippingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} billingAddress{name address1 address2 city provinceCode zip countryCodeV2 phone} lineItems(first:250){nodes{id name sku quantity originalUnitPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} discountedTotalSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} product{id title} variant{id title sku requiresComponents} components{id sku title quantity variant{id title sku}}}} appliedDiscount{title description value valueType amountSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}} discountCodes shippingLine{title custom originalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}} tags order{id name}}}"""
         result = await self.client.graphql(query, {"id": args["id"]})
         return {"draftOrder": result["data"]["draftOrder"], "containsPII": True}
 
@@ -483,7 +488,7 @@ class ShopifyOperations:
         if len(set(variant_ids)) != len(variant_ids):
             raise ValueError("Cada variante pode aparecer apenas uma vez; consolide a quantidade")
         draft_input = self._draft_order_input(args)
-        result = await self.client.graphql("""mutation DraftOrderCalculate($input:DraftOrderInput!,$ids:[ID!]!){draftOrderCalculate(input:$input){calculatedDraftOrder{customer{id displayName email} presentmentCurrencyCode subtotalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} lineItems{title variant{id title sku availableForSale inventoryQuantity product{id title status}} quantity discountedTotalSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}} discountCodes{code applicable rejectionReason}} userErrors{field message}} nodes(ids:$ids){... on ProductVariant{id title sku availableForSale inventoryQuantity product{id title status}}}}""", {"input": draft_input, "ids": variant_ids})
+        result = await self.client.graphql("""mutation DraftOrderCalculate($input:DraftOrderInput!,$ids:[ID!]!){draftOrderCalculate(input:$input){calculatedDraftOrder{customer{id displayName email} presentmentCurrencyCode subtotalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalDiscountsSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalTaxSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} lineItems{title variant{id title sku requiresComponents availableForSale inventoryQuantity product{id title status}} quantity discountedTotalSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} components{sku title quantity variant{id title sku}}} discountCodes{code applicable rejectionReason}} userErrors{field message}} nodes(ids:$ids){... on ProductVariant{id title sku availableForSale inventoryQuantity product{id title status}}}}""", {"input": draft_input, "ids": variant_ids})
         payload = result["data"]["draftOrderCalculate"]
         if payload.get("userErrors"):
             raise ShopifyError("Shopify rejeitou o cálculo do draft order", details=payload["userErrors"])
@@ -539,7 +544,7 @@ class ShopifyOperations:
         return {field: args[field] for field in ("id", "paymentGatewayId", "sourceName") if field in args}
 
     async def prepare_draft_order_complete(self, args: dict[str, Any]) -> dict[str, Any]:
-        result = await self.client.graphql("""query DraftOrderCompletePreview($id:ID!){draftOrder(id:$id){id name status completedAt email currencyCode totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} lineItems(first:250){nodes{id name sku quantity variant{id availableForSale inventoryQuantity product{id title status}}}} order{id name}}}""", {"id": args["id"]})
+        result = await self.client.graphql("""query DraftOrderCompletePreview($id:ID!){draftOrder(id:$id){id name status completedAt email currencyCode totalPriceSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} lineItems(first:250){nodes{id name sku quantity variant{id sku requiresComponents availableForSale inventoryQuantity product{id title status}} components{id sku title quantity variant{id sku availableForSale inventoryQuantity}}}} order{id name}}}""", {"id": args["id"]})
         draft = result["data"]["draftOrder"]
         if draft is None:
             raise ShopifyError("Draft order não encontrado")
@@ -2194,7 +2199,7 @@ class ShopifyOperations:
         result = await self.client.graphql("mutation WebhookDelete($id:ID!){webhookSubscriptionDelete(id:$id){deletedWebhookSubscriptionId userErrors{field message}}}", mutation_args)
         return {"success": True, "operation": "webhookSubscriptionDelete", **mutation_result(result, "webhookSubscriptionDelete")}
 
-    _BULK_OPERATION_FIELDS = """id type status errorCode createdAt completedAt objectCount rootObjectCount fileSize url partialDataUrl clientIdentifier"""
+    _BULK_OPERATION_FIELDS = """id type status errorCode createdAt completedAt objectCount rootObjectCount fileSize url partialDataUrl"""
 
     async def list_bulk_operations(self, args: dict[str, Any]) -> dict[str, Any]:
         query = f"query BulkOperations($first:Int!,$after:String,$query:String){{bulkOperations(first:$first,after:$after,query:$query,sortKey:CREATED_AT,reverse:true){{edges{{cursor node{{{self._BULK_OPERATION_FIELDS}}}}}pageInfo{{hasNextPage endCursor}}}}}}"
@@ -2220,10 +2225,10 @@ class ShopifyOperations:
             filters.append(f"query:{json.dumps(args['query'], ensure_ascii=False)}")
         suffix = f"({','.join(filters)})" if filters else ""
         documents = {
-            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping}}}}}}}}}}}}}}}}",
+            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable requiresComponents selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping}} productVariantComponents{{edges{{node{{quantity productVariant{{id sku title price product{{id title handle}}}}}}}}}}}}}}}}}}}}}}}}",
             "PRODUCT_VARIANTS": f"{{productVariants{suffix}{{edges{{node{{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale selectedOptions{{name value}} product{{id title handle status}} inventoryItem{{id tracked requiresShipping}}}}}}}}}}",
             "COLLECTIONS": f"{{collections{suffix}{{edges{{node{{id title handle descriptionHtml sortOrder updatedAt productsCount{{count}} seo{{title description}} ruleSet{{appliedDisjunctively rules{{column relation condition conditionObject{{... on CollectionRuleMetafieldCondition{{metafieldDefinition{{id namespace key}}}}}}}}}}}}}}}}}}",
-            "ORDERS": f"{{orders{suffix}{{edges{{node{{id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus email phone tags note currencyCode currentTotalPriceSet{{shopMoney{{amount currencyCode}}}} customer{{id}} lineItems{{edges{{node{{id name sku quantity currentQuantity originalUnitPriceSet{{shopMoney{{amount currencyCode}}}} variant{{id}}}}}}}}}}}}}}}}",
+            "ORDERS": f"{{orders{suffix}{{edges{{node{{id name createdAt processedAt cancelledAt displayFinancialStatus currencyCode subtotalPriceSet{{shopMoney{{amount}}}} totalShippingPriceSet{{shopMoney{{amount}}}} totalDiscountsSet{{shopMoney{{amount}}}} currentTotalPriceSet{{shopMoney{{amount}}}} totalRefundedSet{{shopMoney{{amount}}}} discountCodes customAttributes{{key value}} lineItems{{edges{{node{{id discountAllocations{{allocatedAmountSet{{shopMoney{{amount}}}} discountApplication{{__typename value{{__typename ... on MoneyV2{{amount}} ... on PricingPercentageValue{{percentage}}}} ... on DiscountCodeApplication{{code}} ... on AutomaticDiscountApplication{{title}} ... on ManualDiscountApplication{{title}} ... on ScriptDiscountApplication{{title}}}}}}}}}}}}}}}}}}}}",
             "CUSTOMERS": f"{{customers{suffix}{{edges{{node{{id firstName lastName displayName email phone tags state createdAt updatedAt numberOfOrders amountSpent{{amount currencyCode}} defaultAddress{{id address1 address2 city provinceCode countryCodeV2 zip}}}}}}}}}}",
             "INVENTORY_ITEMS": f"{{inventoryItems{suffix}{{edges{{node{{id sku tracked requiresShipping createdAt updatedAt variant{{id title product{{id}}}} inventoryLevels{{edges{{node{{id location{{id name}} quantities(names:[\"available\",\"on_hand\",\"committed\",\"reserved\",\"incoming\",\"damaged\",\"safety_stock\",\"quality_control\"]){{name quantity}}}}}}}}}}}}}}}}",
             "METAOBJECTS": f"{{metaobjects(type:{json.dumps(metaobject_type, ensure_ascii=False)}{',' + ','.join(filters) if filters else ''}){{edges{{node{{id type handle displayName updatedAt capabilities{{publishable{{status}}}} fields{{key type value reference{{id}} references{{edges{{node{{id}}}}}}}}}}}}}}}}",
@@ -2234,7 +2239,12 @@ class ShopifyOperations:
     def _bulk_export_args(args: dict[str, Any]) -> dict[str, Any]:
         return {key: args[key] for key in ("resource", "query", "metaobjectType", "groupObjects") if key in args}
 
+    def _guard_bulk_export_pii(self, resource: str) -> None:
+        if resource == "CUSTOMERS" and self.client.settings.tool_profile != "full":
+            raise ShopifyError("Exportação de CUSTOMERS exige o perfil full (contém PII).")
+
     async def prepare_bulk_export(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._guard_bulk_export_pii(args["resource"])
         document = self._bulk_export_document(args)
         mutation_args = self._bulk_export_args(args)
         token = self.confirmations.issue("shopify_start_bulk_export", mutation_args)
@@ -2246,6 +2256,7 @@ class ShopifyOperations:
         return {"willStart": mutation_args, "documentKind": "curated", "graphqlAcceptedFromCaller": False, "estimatedConnections": document.count("edges{"), "warnings": warnings, **token}
 
     async def start_bulk_export(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._guard_bulk_export_pii(args["resource"])
         mutation_args = self._bulk_export_args(args)
         self._require_write(args, "shopify_start_bulk_export", mutation_args)
         document = self._bulk_export_document(args)
@@ -2285,6 +2296,7 @@ class ShopifyOperations:
     _BULK_IMPORT_MUTATIONS = {
         "PRODUCT_CREATE": "mutation BulkProductCreate($product:ProductCreateInput!){productCreate(product:$product){product{id title handle status} userErrors{field message}}}",
         "PRODUCT_UPDATE": "mutation BulkProductUpdate($product:ProductUpdateInput!){productUpdate(product:$product){product{id title handle status updatedAt} userErrors{field message}}}",
+        "PRODUCT_VARIANTS_BULK_UPDATE": "mutation BulkVariantsUpdate($productId:ID!,$variants:[ProductVariantsBulkInput!]!){productVariantsBulkUpdate(productId:$productId,variants:$variants,allowPartialUpdates:false){productVariants{id barcode sku updatedAt} userErrors{field message code}}}",
         "METAFIELDS_SET": "mutation BulkMetafieldsSet($metafields:[MetafieldsSetInput!]!){metafieldsSet(metafields:$metafields){metafields{id ownerType namespace key type compareDigest updatedAt} userErrors{field message code}}}",
         "METAOBJECT_CREATE": "mutation BulkMetaobjectCreate($metaobject:MetaobjectCreateInput!){metaobjectCreate(metaobject:$metaobject){metaobject{id type handle updatedAt} userErrors{field message code elementIndex elementKey}}}",
         "METAOBJECT_UPDATE": "mutation BulkMetaobjectUpdate($id:ID!,$metaobject:MetaobjectUpdateInput!){metaobjectUpdate(id:$id,metaobject:$metaobject){metaobject{id type handle updatedAt} userErrors{field message code elementIndex elementKey}}}",
@@ -2292,6 +2304,7 @@ class ShopifyOperations:
     _BULK_IMPORT_VARIABLES = {
         "PRODUCT_CREATE": {"product": "ProductCreateInput!"},
         "PRODUCT_UPDATE": {"product": "ProductUpdateInput!"},
+        "PRODUCT_VARIANTS_BULK_UPDATE": {"productId": "ID!", "variants": "[ProductVariantsBulkInput!]! (uma linha por produto; atomico por linha)"},
         "METAFIELDS_SET": {"metafields": "[MetafieldsSetInput!]! (máximo 25 por linha; use compareDigest)"},
         "METAOBJECT_CREATE": {"metaobject": "MetaobjectCreateInput!"},
         "METAOBJECT_UPDATE": {"id": "ID!", "metaobject": "MetaobjectUpdateInput!"},
