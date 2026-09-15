@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .client import ShopifyClient, ShopifyError, mutation_result
 from .confirmations import ConfirmationManager
+from .financial import check as check_financial, money as parse_money
 
 
 def _page_size(value: Any) -> int:
@@ -69,6 +70,22 @@ class ShopifyOperations:
     def __init__(self, client: ShopifyClient, confirmations: ConfirmationManager | None = None):
         self.client = client
         self.confirmations = confirmations or ConfirmationManager()
+
+    def _financial(self, operation, amount, currency):
+        return check_financial(self.client.settings.financial_limits_brl, operation, amount, currency)
+
+    async def _recheck_financial(self, context, operation, resource_id):
+        if not context or context.get('operation') != operation:
+            raise ValueError('Proposta financeira ausente: prepare novamente a operação')
+        if operation == 'cancel_order':
+            result = await self.client.graphql('query FinancialOrderCheck($id:ID!){order(id:$id){currentTotalPriceSet{shopMoney{amount currencyCode}}}}', {'id': resource_id})
+            value = ((result.get('data') or {}).get('order') or {}).get('currentTotalPriceSet', {}).get('shopMoney', {})
+        else:
+            result = await self.client.graphql('query FinancialDraftCheck($id:ID!){draftOrder(id:$id){totalPriceSet{shopMoney{amount currencyCode}}}}', {'id': resource_id})
+            value = ((result.get('data') or {}).get('draftOrder') or {}).get('totalPriceSet', {}).get('shopMoney', {})
+        current = self._financial(operation, value.get('amount'), value.get('currencyCode'))
+        if current['amount'] != context['amount'] or current['currency'] != context['currency']:
+            raise ValueError('Total mudou após a proposta: prepare e aprove novamente')
 
     async def get_shop(self, _: dict[str, Any]) -> dict[str, Any]:
         result = await self.client.graphql("""query ShopContext { shop { id name email contactEmail myshopifyDomain primaryDomain { id host url } currencyCode enabledPresentmentCurrencies ianaTimezone timezoneAbbreviation weightUnit taxesIncluded taxShipping plan { displayName partnerDevelopment shopifyPlus } resourceLimits { maxProductVariants } } }""")
@@ -329,7 +346,10 @@ class ShopifyOperations:
         if active_returns:
             raise ShopifyError("Pedido possui devolução ativa e não pode ser preparado para cancelamento", details={"returns": active_returns})
         mutation_args = self._order_cancel_variables(args)
-        token = self.confirmations.issue("shopify_cancel_order", mutation_args)
+        amount = order.get('currentTotalPriceSet', {}).get('shopMoney', {})
+        financial = self._financial('cancel_order', amount.get('amount'), amount.get('currencyCode'))
+        token = self.confirmations.issue("shopify_cancel_order", mutation_args, context=financial)
+        token['financialSummary'] = financial
         warnings = ["O cancelamento é irreversível."]
         if args["refundOriginalPaymentMethods"]:
             warnings.append("Os valores elegíveis serão reembolsados aos meios de pagamento originais.")
@@ -343,7 +363,8 @@ class ShopifyOperations:
 
     async def cancel_order(self, args: dict[str, Any]) -> dict[str, Any]:
         mutation_args = self._order_cancel_variables(args)
-        self._require_write(args, "shopify_cancel_order", mutation_args)
+        context = self._require_write(args, "shopify_cancel_order", mutation_args)
+        await self._recheck_financial(context, 'cancel_order', args['orderId'])
         query = """mutation OrderCancel($orderId:ID!,$reason:OrderCancelReason!,$refundMethod:OrderCancelRefundMethodInput!,$restock:Boolean!,$notifyCustomer:Boolean!,$staffNote:String!){orderCancel(orderId:$orderId,reason:$reason,refundMethod:$refundMethod,restock:$restock,notifyCustomer:$notifyCustomer,staffNote:$staffNote){job{id done} orderCancelUserErrors{field message code}}}"""
         result = await self.client.graphql(query, mutation_args)
         payload = result["data"].get("orderCancel") or {}
@@ -394,11 +415,16 @@ class ShopifyOperations:
                 if suggested.get("parentTransaction"):
                     transaction["parentId"] = suggested["parentTransaction"]["id"]
                 transactions.append(transaction)
+        if len(currencies) > 1:
+            raise ValueError('Reembolso com moedas diferentes: use o sistema de origem')
         currency = next(iter(currencies), order["presentmentCurrencyCode"])
         idempotency_key = str(uuid4())
         apply_args = {**args, "transactions": transactions, "currency": currency}
         mutation_args = {"input": self._refund_input(apply_args), "idempotencyKey": idempotency_key}
-        token = self.confirmations.issue("shopify_create_refund", mutation_args)
+        total = sum((parse_money(t['amount']) for t in transactions), parse_money('0'))
+        financial = self._financial('refund', total, currency)
+        token = self.confirmations.issue("shopify_create_refund", mutation_args, context=financial)
+        token['financialSummary'] = financial
         warnings = ["Esta operação movimenta valores e não pode ser desfeita automaticamente."]
         if args["notifyCustomer"]:
             warnings.append("O cliente receberá notificação do refund.")
@@ -406,7 +432,10 @@ class ShopifyOperations:
 
     async def create_refund(self, args: dict[str, Any]) -> dict[str, Any]:
         mutation_args = {"input": self._refund_input(args), "idempotencyKey": args["idempotencyKey"]}
-        self._require_write(args, "shopify_create_refund", mutation_args)
+        context = self._require_write(args, "shopify_create_refund", mutation_args)
+        financial = self._financial('refund', sum((parse_money(t['amount']) for t in args['transactions']), parse_money('0')), args['currency'])
+        if not context or context != financial:
+            raise ValueError('Proposta financeira inválida: prepare novamente')
         query = """mutation RefundCreate($input:RefundInput!,$idempotencyKey:String!){refundCreate(input:$input) @idempotent(key:$idempotencyKey){order{id name displayFinancialStatus totalRefundedSet{shopMoney{amount currencyCode}}} refund{id createdAt note totalRefundedSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}} refundLineItems(first:100){nodes{quantity restockType location{id name} lineItem{id name sku}}} transactions(first:100){nodes{id kind status gateway amountSet{shopMoney{amount currencyCode} presentmentMoney{amount currencyCode}}}}} userErrors{field message}}}"""
         result = await self.client.graphql(query, mutation_args)
         return {"success": True, "operation": "refundCreate", "idempotencyKey": args["idempotencyKey"], **mutation_result(result, "refundCreate")}
@@ -556,7 +585,10 @@ class ShopifyOperations:
             if variant and (not variant["availableForSale"] or variant["inventoryQuantity"] < item["quantity"]):
                 shortages.append({"lineItemId": item["id"], "sku": item.get("sku"), "requested": item["quantity"], "inventoryQuantity": variant["inventoryQuantity"], "availableForSale": variant["availableForSale"]})
         mutation_args = self._draft_complete_args(args)
-        token = self.confirmations.issue("shopify_complete_draft_order", mutation_args)
+        amount = draft.get('totalPriceSet', {}).get('shopMoney', {})
+        financial = self._financial('complete_draft', amount.get('amount'), amount.get('currencyCode'))
+        token = self.confirmations.issue("shopify_complete_draft_order", mutation_args, context=financial)
+        token['financialSummary'] = financial
         warnings = ["A conclusão converte o draft em pedido, marca pagamento e reserva estoque; não pode ser desfeita por esta tool."]
         if shortages:
             warnings.append("A Shopify poderá rejeitar ou concluir com disponibilidade insuficiente conforme a política das variantes.")
@@ -564,7 +596,8 @@ class ShopifyOperations:
 
     async def complete_draft_order(self, args: dict[str, Any]) -> dict[str, Any]:
         mutation_args = self._draft_complete_args(args)
-        self._require_write(args, "shopify_complete_draft_order", mutation_args)
+        context = self._require_write(args, "shopify_complete_draft_order", mutation_args)
+        await self._recheck_financial(context, 'complete_draft', args['id'])
         result = await self.client.graphql("""mutation DraftOrderComplete($id:ID!,$paymentGatewayId:ID,$sourceName:String){draftOrderComplete(id:$id,paymentGatewayId:$paymentGatewayId,sourceName:$sourceName){draftOrder{id name status completedAt order{id name displayFinancialStatus displayFulfillmentStatus}} userErrors{field message}}}""", mutation_args)
         return {"success": True, "operation": "draftOrderComplete", **mutation_result(result, "draftOrderComplete")}
 
@@ -1386,13 +1419,13 @@ class ShopifyOperations:
         result = await self.client.graphql(query, mutation_args)
         return {"success": True, "operation": "inventoryBulkToggleActivation", **mutation_result(result, "inventoryBulkToggleActivation")}
 
-    def _require_write(self, args: dict[str, Any], tool: str, mutation_args: dict[str, Any]) -> None:
+    def _require_write(self, args: dict[str, Any], tool: str, mutation_args: dict[str, Any]) -> dict[str, Any] | None:
         if not self.client.settings.enable_writes:
             raise ShopifyError("Escritas desabilitadas. Configure SHOPIFY_ENABLE_WRITES=true e reinicie o servidor.")
         token = args.get("confirmationToken")
         if not isinstance(token, str):
             raise ShopifyError("Operação não executada: prepare a alteração e envie confirmationToken.")
-        self.confirmations.consume(token, tool, mutation_args)
+        return self.confirmations.consume(token, tool, mutation_args)
 
     @staticmethod
     def _unique_metafields(items: list[dict[str, Any]]) -> None:

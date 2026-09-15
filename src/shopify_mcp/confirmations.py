@@ -6,6 +6,7 @@ import json
 import secrets
 import threading
 import time
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,7 @@ class Proposal:
     tool: str
     arguments_digest: str
     expires_at: float
+    context: dict[str, Any] | None = None
 
 
 class ConfirmationManager:
@@ -45,7 +47,7 @@ class ConfirmationManager:
         canonical = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    def issue(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def issue(self, tool: str, arguments: dict[str, Any], *, context: dict[str, Any] | None = None) -> dict[str, Any]:
         nonce = secrets.token_urlsafe(24)
         signature = hmac.new(self._secret, nonce.encode("ascii"), hashlib.sha256).hexdigest()
         token = f"{nonce}.{signature}"
@@ -55,10 +57,10 @@ class ConfirmationManager:
             self._prune_expired(now)
             if len(self._pending) >= self.max_pending:
                 raise ConfirmationError("Limite de confirmações pendentes atingido; aguarde a expiração ou aplique as propostas existentes")
-            self._pending[nonce] = Proposal(tool, self._digest(arguments), expires_at)
+            self._pending[nonce] = Proposal(tool, self._digest(arguments), expires_at, copy.deepcopy(context))
         return {"confirmationToken": token, "expiresInSeconds": self.ttl_seconds}
 
-    def consume(self, token: str, tool: str, arguments: dict[str, Any]) -> None:
+    def consume(self, token: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
         try:
             nonce, signature = token.split(".", 1)
         except ValueError as exc:
@@ -74,3 +76,4 @@ class ConfirmationManager:
             raise ConfirmationError("Token de confirmação expirado")
         if proposal.tool != tool or proposal.arguments_digest != self._digest(arguments):
             raise ConfirmationError("Token não corresponde exatamente à operação preparada")
+        return proposal.context

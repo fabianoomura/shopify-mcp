@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from .financial import parse_limits
 
 DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$", re.IGNORECASE)
 VERSION_RE = re.compile(r"^20\d{2}-(01|04|07|10)$")
@@ -24,6 +25,7 @@ class Settings:
     tool_profile: str = "readonly"
     audit_log: Path | None = None
     confirmation_ttl_seconds: int = 600
+    financial_limits_brl: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,6 +58,7 @@ class Settings:
         if not 0 <= max_retries <= 10:
             raise ValueError("SHOPIFY_MAX_RETRIES deve estar entre 0 e 10")
         return cls(
+            financial_limits_brl=parse_limits(os.getenv("SHOPIFY_FINANCIAL_LIMITS_BRL", "{}")),
             domain=domain,
             access_token=token,
             api_version=version,

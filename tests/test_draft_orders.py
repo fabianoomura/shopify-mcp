@@ -5,7 +5,7 @@ from shopify_mcp.operations import ShopifyOperations
 
 
 class SequenceClient:
-    settings = Settings("test.myshopify.com", "secret")
+    settings = Settings("test.myshopify.com", "secret", financial_limits_brl=(("complete_draft", "100.00"),))
 
     def __init__(self, responses):
         self.responses, self.calls = list(responses), []
@@ -44,6 +44,7 @@ async def test_draft_order_calculate_requests_components():
 @pytest.mark.asyncio
 async def test_draft_order_complete_preview_requests_components():
     draft = {"id": "gid://shopify/DraftOrder/1", "name": "#D1", "status": "OPEN",
+             "totalPriceSet": {"shopMoney": {"amount": "100.00", "currencyCode": "BRL"}},
              "order": None, "lineItems": {"nodes": []}}
     client = SequenceClient([{"data": {"draftOrder": draft}}])
     await ShopifyOperations(client).prepare_draft_order_complete({"id": "gid://shopify/DraftOrder/1"})

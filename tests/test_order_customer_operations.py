@@ -8,7 +8,7 @@ from shopify_mcp.operations import ShopifyOperations
 
 
 class SequenceClient:
-    settings = Settings("test.myshopify.com", "secret", enable_writes=True)
+    settings = Settings("test.myshopify.com", "secret", enable_writes=True, financial_limits_brl=(("cancel_order", "100.00"),))
 
     def __init__(self, responses):
         self.responses = list(responses)
@@ -71,6 +71,7 @@ async def test_order_cancel_is_irreversible_financial_and_destructive():
     payload = {"orderId": "gid://shopify/Order/1", "reason": "CUSTOMER", "refundOriginalPaymentMethods": True, "restock": True, "notifyCustomer": True, "staffNote": "Solicitado pelo cliente"}
     proposal = await ops.prepare_order_cancel(payload)
     assert proposal["financial"] is True and proposal["irreversible"] is True
+    client.responses.insert(0, {"data": {"order": cancellable_order()}})
     result = await ops.cancel_order({**payload, "confirmationToken": proposal["confirmationToken"]})
     assert result["operation"] == "orderCancel"
     assert BY_NAME["shopify_cancel_order"].tool.annotations.destructiveHint is True

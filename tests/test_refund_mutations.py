@@ -7,7 +7,7 @@ from shopify_mcp.operations import ShopifyOperations
 
 
 class SequenceClient:
-    settings = Settings("test.myshopify.com", "secret", enable_writes=True)
+    settings = Settings("test.myshopify.com", "secret", enable_writes=True, financial_limits_brl=(("refund", "100.00"),))
 
     def __init__(self, responses):
         self.responses = list(responses)
