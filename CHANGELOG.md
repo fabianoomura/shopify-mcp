@@ -26,6 +26,12 @@
 - **Bulk import de variantes:** novo kind `PRODUCT_VARIANTS_BULK_UPDATE`
   (`productVariantsBulkUpdate` com `allowPartialUpdates:false`, uma linha JSONL por produto).
   Permite corrigir variantes de muitos produtos num único job em vez de N chamadas prepare/apply.
+- **Bulk import de tags:** kinds `TAGS_ADD` e `TAGS_REMOVE` (`tagsAdd`/`tagsRemove`, uma linha por
+  produto com `id` + `tags:[...]`). Aditivo por construção — nunca substitui o conjunto de tags,
+  ao contrário de `productUpdate(tags)`. Para sincronizar navegação em massa sem risco de apagar tags.
+- **Bulk import de publicação:** kinds `PUBLISHABLE_PUBLISH` e `PUBLISHABLE_UNPUBLISH`
+  (`publishablePublish`/`publishableUnpublish`, uma linha JSONL por produto/coleção com `id` +
+  `input:[{publicationId}]`). Permite (re)publicar centenas de produtos num canal num único job.
 - **Bulk import no perfil `catalog`:** os quatro tools de importação (staged upload + import)
   saíram de `full`-somente para `catalog`+`full`, alinhados com o export.
 

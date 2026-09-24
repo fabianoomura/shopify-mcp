@@ -144,6 +144,16 @@ INVENTORY_TOGGLE_FIELDS = {
     }},
 }
 COLLECTION_ID = {"type": "string", "pattern": "^gid://shopify/Collection/[0-9]+$"}
+COLLECTION_RULE_COLUMNS = ["TAG", "TITLE", "TYPE", "VENDOR", "VARIANT_TITLE", "VARIANT_PRICE", "VARIANT_COMPARE_AT_PRICE", "VARIANT_INVENTORY", "VARIANT_WEIGHT", "IS_PRICE_REDUCED", "PRODUCT_TAXONOMY_NODE_ID", "PRODUCT_CATEGORY_ID", "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS"]
+COLLECTION_RULE_RELATIONS = ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS", "IS_SET", "IS_NOT_SET"]
+COLLECTION_RULE_SET = {"type": "object", "additionalProperties": False, "required": ["appliedDisjunctively", "rules"], "properties": {
+    "appliedDisjunctively": {"type": "boolean", "description": "false = todas as condições (E); true = qualquer condição (OU)."},
+    "rules": {"type": "array", "minItems": 1, "maxItems": 60, "items": {"type": "object", "additionalProperties": False, "required": ["column", "relation", "condition"], "properties": {
+        "column": {"type": "string", "enum": COLLECTION_RULE_COLUMNS},
+        "relation": {"type": "string", "enum": COLLECTION_RULE_RELATIONS},
+        "condition": {"type": "string", "maxLength": 255},
+    }}},
+}}
 COLLECTION_BASE_FIELDS = {
     "title": {"type": "string", "minLength": 1, "maxLength": 255},
     "descriptionHtml": {"type": "string", "maxLength": 1000000},
@@ -151,6 +161,7 @@ COLLECTION_BASE_FIELDS = {
     "seo": SEO_INPUT,
     "sortOrder": {"type": "string", "enum": ["ALPHA_ASC", "ALPHA_DESC", "BEST_SELLING", "CREATED", "CREATED_DESC", "MANUAL", "PRICE_ASC", "PRICE_DESC"]},
     "templateSuffix": {"type": ["string", "null"], "maxLength": 255},
+    "ruleSet": COLLECTION_RULE_SET,
 }
 ORDER_ID = {"type": "string", "pattern": "^gid://shopify/Order/[0-9]+$"}
 ORDER_UPDATE_FIELDS = {
@@ -396,7 +407,7 @@ BULK_EXPORT_FIELDS = {
     "metaobjectType": METAOBJECT_TYPE,
     "groupObjects": {"type": "boolean", "default": False, "description": "Agrupa filhos no JSONL; é mais lento e deve permanecer false salvo necessidade comprovada."},
 }
-BULK_IMPORT_KIND = {"type": "string", "enum": ["PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_VARIANTS_BULK_UPDATE", "METAFIELDS_SET", "METAOBJECT_CREATE", "METAOBJECT_UPDATE"]}
+BULK_IMPORT_KIND = {"type": "string", "enum": ["PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_VARIANTS_BULK_UPDATE", "PUBLISHABLE_PUBLISH", "PUBLISHABLE_UNPUBLISH", "TAGS_ADD", "TAGS_REMOVE", "METAFIELDS_SET", "METAOBJECT_CREATE", "METAOBJECT_UPDATE"]}
 BULK_IMPORT_STAGE_FIELDS = {
     "filename": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.jsonl$", "maxLength": 255},
     "fileSize": {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20},

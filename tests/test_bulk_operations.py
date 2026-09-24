@@ -115,3 +115,39 @@ async def test_bulk_import_supports_variants_bulk_update():
     sent = client.calls[0][1]["mutation"]
     assert "productVariantsBulkUpdate" in sent
     assert "allowPartialUpdates:false" in sent
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_supports_publishable_publish_and_unpublish():
+    for kind, name in (("PUBLISHABLE_PUBLISH", "publishablePublish"), ("PUBLISHABLE_UNPUBLISH", "publishableUnpublish")):
+        created = {"id": "gid://shopify/BulkOperation/78", "type": "MUTATION", "status": "CREATED"}
+        client = SequenceClient([{"data": {"bulkOperationRunMutation": {"bulkOperation": created, "userErrors": []}}}])
+        ops = ShopifyOperations(client)
+        request = {"kind": kind, "stagedUploadPath": "tmp/1/bulk/job/publish.jsonl", "clientIdentifier": "fb-republish",
+                   "lineCount": 149, "sha256": "c" * 64, "acknowledgeUnorderedExecution": True}
+        proposal = await ops.prepare_bulk_import(request)
+        assert proposal["variablesPerJsonlLine"]["id"] == "ID!"
+        assert proposal["variablesPerJsonlLine"]["input"].startswith("[PublicationInput!]!")
+        result = await ops.start_bulk_import({**request, "confirmationToken": proposal["confirmationToken"]})
+        assert result["bulkOperation"] == created
+        sent = client.calls[0][1]["mutation"]
+        assert name in sent
+        assert "... on Product{id title}" in sent
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_supports_tags_add_and_remove():
+    for kind, name in (("TAGS_ADD", "tagsAdd"), ("TAGS_REMOVE", "tagsRemove")):
+        created = {"id": "gid://shopify/BulkOperation/79", "type": "MUTATION", "status": "CREATED"}
+        client = SequenceClient([{"data": {"bulkOperationRunMutation": {"bulkOperation": created, "userErrors": []}}}])
+        ops = ShopifyOperations(client)
+        request = {"kind": kind, "stagedUploadPath": "tmp/1/bulk/job/tags.jsonl", "clientIdentifier": "menu-tags",
+                   "lineCount": 218, "sha256": "d" * 64, "acknowledgeUnorderedExecution": True}
+        proposal = await ops.prepare_bulk_import(request)
+        assert proposal["variablesPerJsonlLine"]["id"] == "ID!"
+        assert proposal["variablesPerJsonlLine"]["tags"].startswith("[String!]!")
+        result = await ops.start_bulk_import({**request, "confirmationToken": proposal["confirmationToken"]})
+        assert result["bulkOperation"] == created
+        sent = client.calls[0][1]["mutation"]
+        assert name in sent and "productUpdate" not in sent
+

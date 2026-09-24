@@ -53,8 +53,66 @@ def _product_input(args: dict[str, Any], *, include_id: bool) -> dict[str, Any]:
     return result
 
 
+_RULE_RELATIONS = {
+    "TAG": {"EQUALS", "NOT_EQUALS"},
+    "TITLE": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
+    "TYPE": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
+    "VENDOR": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
+    "VARIANT_TITLE": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
+    "VARIANT_PRICE": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
+    "VARIANT_COMPARE_AT_PRICE": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
+    "VARIANT_INVENTORY": {"EQUALS", "GREATER_THAN", "LESS_THAN"},
+    "VARIANT_WEIGHT": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
+    "IS_PRICE_REDUCED": {"IS_SET", "IS_NOT_SET"},
+    "PRODUCT_TAXONOMY_NODE_ID": {"EQUALS", "NOT_EQUALS"},
+    "PRODUCT_CATEGORY_ID": {"EQUALS", "NOT_EQUALS"},
+    "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS": {"EQUALS", "NOT_EQUALS"},
+}
+_RULE_NEGATIVE = {"NOT_EQUALS", "NOT_CONTAINS", "IS_NOT_SET"}
+
+
+def _rule_set_warnings(rule_set: dict[str, Any] | None) -> list[str]:
+    """Valida a regra localmente e alerta sobre a armadilha do OU com regra negativa."""
+    if not rule_set:
+        return []
+    rules = rule_set["rules"]
+    for rule in rules:
+        allowed = _RULE_RELATIONS[rule["column"]]
+        if rule["relation"] not in allowed:
+            raise ValueError(f"Relação {rule['relation']} não é aceita para {rule['column']}; use uma de {sorted(allowed)}")
+    seen: set[tuple[str, str, str]] = set()
+    for rule in rules:
+        key = (rule["column"], rule["relation"], rule["condition"])
+        if key in seen:
+            raise ValueError(f"Regra repetida: {key[0]} {key[1]} {key[2]!r}")
+        seen.add(key)
+    warnings = ["A troca de regra recalcula a membership de forma assíncrona (a mutation devolve um job); confira a contagem depois, não no ato."]
+    negatives = [r for r in rules if r["relation"] in _RULE_NEGATIVE]
+    if rule_set["appliedDisjunctively"] and negatives:
+        warnings.insert(0, "ATENÇÃO: com appliedDisjunctively=true (qualquer condição), uma regra negativa INCLUI todo produto que não bate nela, em vez de excluir. Para excluir, use appliedDisjunctively=false.")
+    return warnings
+
+
+def _grouped_condition_warning(current: dict[str, Any] | None) -> str | None:
+    """A API achata condições de múltiplos valores do admin ("Fronha OU Travesseiro") em regras soltas, iguais a regras E."""
+    if not current or current.get("appliedDisjunctively"):
+        return None
+    positive = {"EQUALS", "CONTAINS", "STARTS_WITH", "ENDS_WITH"}
+    seen: dict[tuple[str, str], int] = {}
+    for rule in current.get("rules") or []:
+        if rule["relation"] in positive:
+            key = (rule["column"], rule["relation"])
+            seen[key] = seen.get(key, 0) + 1
+    repeated = [f"{column} {relation}" for (column, relation), count in seen.items() if count > 1]
+    if not repeated:
+        return None
+    return ("ATENÇÃO: a regra atual repete " + ", ".join(repeated) + ". Isso pode ser uma condição de múltiplos valores criada no admin "
+            "(os valores valem como OU), que a API devolve achatada e idêntica a regras E. Regravar pela API transforma em E — a coleção "
+            "fronhas, por exemplo, cairia de 103 para 0. Confira a contagem na loja antes de aplicar.")
+
+
 def _collection_input(args: dict[str, Any], *, include_id: bool) -> dict[str, Any]:
-    fields = ("title", "descriptionHtml", "handle", "seo", "sortOrder", "templateSuffix")
+    fields = ("title", "descriptionHtml", "handle", "seo", "sortOrder", "templateSuffix", "ruleSet")
     result = {field: args[field] for field in fields if field in args}
     if include_id:
         result["id"] = args["id"]
@@ -1239,13 +1297,18 @@ class ShopifyOperations:
 
     async def prepare_collection_create(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=False)
+        warnings = _rule_set_warnings(collection_input.get("ruleSet"))
+        if "ruleSet" in collection_input:
+            warnings.insert(0, "A coleção será criada sem publicação; a membership vem da regra informada.")
+        else:
+            warnings.insert(0, "A coleção será criada sem publicação e sem fonte de produtos; configure membership e publicação separadamente.")
         token = self.confirmations.issue("shopify_create_collection", collection_input)
-        return {"operation": "shopify_create_collection", "before": None, "after": collection_input, "warnings": ["A coleção será criada sem publicação e sem fonte de produtos; configure membership e publicação separadamente."], **token}
+        return {"operation": "shopify_create_collection", "before": None, "after": collection_input, "warnings": warnings, **token}
 
     async def create_collection(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=False)
         self._require_write(args, "shopify_create_collection", collection_input)
-        query = """mutation CollectionCreate($collection:CollectionCreateInput!){collectionCreate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title}} userErrors{field message}}}"""
+        query = """mutation CollectionCreate($collection:CollectionCreateInput!){collectionCreate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}} userErrors{field message}}}"""
         result = await self.client.graphql(query, {"collection": collection_input})
         return {"success": True, "operation": "collectionCreate", **mutation_result(result, "collectionCreate")}
 
@@ -1253,19 +1316,25 @@ class ShopifyOperations:
         changes = _collection_input(args, include_id=False)
         if not changes:
             raise ValueError("Informe ao menos um campo para alterar")
-        result = await self.client.graphql("""query CollectionUpdatePreview($id:ID!){collection(id:$id){id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} sources{__typename id title}}}""", {"id": args["id"]})
+        warnings = _rule_set_warnings(changes.get("ruleSet"))
+        result = await self.client.graphql("""query CollectionUpdatePreview($id:ID!){collection(id:$id){id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}}}""", {"id": args["id"]})
         collection = result["data"]["collection"]
         if collection is None:
             raise ShopifyError("Coleção não encontrada")
-        before = {key: collection.get(key) for key in ("title", "descriptionHtml", "handle", "sortOrder", "templateSuffix", "seo")}
+        before = {key: collection.get(key) for key in ("title", "descriptionHtml", "handle", "sortOrder", "templateSuffix", "seo", "ruleSet")}
+        grouped = _grouped_condition_warning(before["ruleSet"]) if "ruleSet" in changes else None
+        if grouped:
+            warnings.insert(0, grouped)
+        if "ruleSet" in changes and before["ruleSet"] is None:
+            warnings.insert(0, "A coleção é manual hoje; ao receber uma regra ela vira automática e a seleção manual de produtos é descartada.")
         mutation_input = {"id": args["id"], **changes}
         token = self.confirmations.issue("shopify_update_collection", mutation_input)
-        return {"collection": {"id": collection["id"], "title": collection["title"], "productsCount": collection.get("productsCount"), "sources": collection.get("sources")}, "before": before, "after": {**before, **changes}, "willChange": before_changed(before, {**before, **changes}), **token}
+        return {"collection": {"id": collection["id"], "title": collection["title"], "productsCount": collection.get("productsCount"), "sources": collection.get("sources")}, "before": before, "after": {**before, **changes}, "willChange": before_changed(before, {**before, **changes}), **({"warnings": warnings} if warnings else {}), **token}
 
     async def update_collection(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=True)
         self._require_write(args, "shopify_update_collection", collection_input)
-        query = """mutation CollectionUpdate($collection:CollectionUpdateInput!){collectionUpdate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title}} job{id done} userErrors{field message}}}"""
+        query = """mutation CollectionUpdate($collection:CollectionUpdateInput!){collectionUpdate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}} job{id done} userErrors{field message}}}"""
         result = await self.client.graphql(query, {"collection": collection_input})
         return {"success": True, "operation": "collectionUpdate", **mutation_result(result, "collectionUpdate")}
 
@@ -2330,6 +2399,10 @@ class ShopifyOperations:
         "PRODUCT_CREATE": "mutation BulkProductCreate($product:ProductCreateInput!){productCreate(product:$product){product{id title handle status} userErrors{field message}}}",
         "PRODUCT_UPDATE": "mutation BulkProductUpdate($product:ProductUpdateInput!){productUpdate(product:$product){product{id title handle status updatedAt} userErrors{field message}}}",
         "PRODUCT_VARIANTS_BULK_UPDATE": "mutation BulkVariantsUpdate($productId:ID!,$variants:[ProductVariantsBulkInput!]!){productVariantsBulkUpdate(productId:$productId,variants:$variants,allowPartialUpdates:false){productVariants{id barcode sku updatedAt} userErrors{field message code}}}",
+        "PUBLISHABLE_PUBLISH": "mutation BulkPublish($id:ID!,$input:[PublicationInput!]!){publishablePublish(id:$id,input:$input){publishable{... on Product{id title} resourcePublicationsCount{count}} userErrors{field message}}}",
+        "PUBLISHABLE_UNPUBLISH": "mutation BulkUnpublish($id:ID!,$input:[PublicationInput!]!){publishableUnpublish(id:$id,input:$input){publishable{... on Product{id title} resourcePublicationsCount{count}} userErrors{field message}}}",
+        "TAGS_ADD": "mutation BulkTagsAdd($id:ID!,$tags:[String!]!){tagsAdd(id:$id,tags:$tags){node{id} userErrors{field message}}}",
+        "TAGS_REMOVE": "mutation BulkTagsRemove($id:ID!,$tags:[String!]!){tagsRemove(id:$id,tags:$tags){node{id} userErrors{field message}}}",
         "METAFIELDS_SET": "mutation BulkMetafieldsSet($metafields:[MetafieldsSetInput!]!){metafieldsSet(metafields:$metafields){metafields{id ownerType namespace key type compareDigest updatedAt} userErrors{field message code}}}",
         "METAOBJECT_CREATE": "mutation BulkMetaobjectCreate($metaobject:MetaobjectCreateInput!){metaobjectCreate(metaobject:$metaobject){metaobject{id type handle updatedAt} userErrors{field message code elementIndex elementKey}}}",
         "METAOBJECT_UPDATE": "mutation BulkMetaobjectUpdate($id:ID!,$metaobject:MetaobjectUpdateInput!){metaobjectUpdate(id:$id,metaobject:$metaobject){metaobject{id type handle updatedAt} userErrors{field message code elementIndex elementKey}}}",
@@ -2338,6 +2411,10 @@ class ShopifyOperations:
         "PRODUCT_CREATE": {"product": "ProductCreateInput!"},
         "PRODUCT_UPDATE": {"product": "ProductUpdateInput!"},
         "PRODUCT_VARIANTS_BULK_UPDATE": {"productId": "ID!", "variants": "[ProductVariantsBulkInput!]! (uma linha por produto; atomico por linha)"},
+        "PUBLISHABLE_PUBLISH": {"id": "ID!", "input": "[PublicationInput!]! (uma linha por produto/coleção; publicationId por canal)"},
+        "PUBLISHABLE_UNPUBLISH": {"id": "ID!", "input": "[PublicationInput!]! (uma linha por produto/coleção; publicationId por canal)"},
+        "TAGS_ADD": {"id": "ID!", "tags": "[String!]! (só acrescenta; nunca substitui o conjunto)"},
+        "TAGS_REMOVE": {"id": "ID!", "tags": "[String!]! (só remove as listadas)"},
         "METAFIELDS_SET": {"metafields": "[MetafieldsSetInput!]! (máximo 25 por linha; use compareDigest)"},
         "METAOBJECT_CREATE": {"metaobject": "MetaobjectCreateInput!"},
         "METAOBJECT_UPDATE": {"id": "ID!", "metaobject": "MetaobjectUpdateInput!"},
