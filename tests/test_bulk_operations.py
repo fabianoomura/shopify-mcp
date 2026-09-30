@@ -22,6 +22,7 @@ def test_bulk_documents_are_curated_and_escape_search_input():
     assert '\\"x\\"' in document
     assert document.startswith("{products(")
     assert "requiresComponents" in document
+    assert "metafields{edges{node{namespace key type value}}}" in document
     assert "productVariantComponents{edges{node{quantity productVariant{id sku title price product{id title handle}}}}}" in document
 
 

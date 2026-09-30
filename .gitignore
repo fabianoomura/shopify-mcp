@@ -15,3 +15,4 @@ docs/MOOUI_PLAYBOOK.md
 docs/RUNBOOK_lancamento.md
 docs/RUNBOOK_tags_campanha.md
 scripts/
+.claude/settings.local.json

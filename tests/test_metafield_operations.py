@@ -91,3 +91,24 @@ async def test_app_definition_delete_requires_deleting_values():
     definition = {"id": "gid://shopify/MetafieldDefinition/1", "name": "Private", "namespace": "$app:mooui", "key": "id", "description": None, "ownerType": "PRODUCT", "type": {"name": "single_line_text_field", "category": "TEXT"}, "pinnedPosition": None, "validations": [], "access": {"admin": "PRIVATE", "storefront": "NONE", "customerAccount": "NONE"}}
     with pytest.raises(ShopifyError, match="exigem"):
         await ShopifyOperations(SequenceClient([{"data": {"metafieldDefinition": definition}}])).prepare_metafield_definition_delete({"id": definition["id"], "deleteAllAssociatedMetafields": False})
+
+
+@pytest.mark.asyncio
+async def test_definition_update_adds_and_removes_categories_as_constraints():
+    current = {"id": "gid://shopify/MetafieldDefinition/2", "namespace": "shopify", "key": "color-pattern", "ownerType": "PRODUCT"}
+    updated = {"data": {"metafieldDefinitionUpdate": {"updatedDefinition": current, "validationJob": None, "userErrors": []}}}
+    client = SequenceClient([{"data": {"metafieldDefinition": current}}, updated])
+    ops = ShopifyOperations(client)
+    request = {"namespace": "shopify", "key": "color-pattern", "ownerType": "PRODUCT", "categoriesToAdd": ["hg-3-64", "aa-1-2-6"], "categoriesToRemove": ["hg-9"]}
+    proposal = await ops.prepare_metafield_definition_update(request)
+    assert proposal["requestedChanges"]["categoriesToAdd"] == ["hg-3-64", "aa-1-2-6"]
+    await ops.update_metafield_definition({**request, "confirmationToken": proposal["confirmationToken"]})
+    sent = client.calls[-1][1]["definition"]
+    assert sent["constraintsUpdates"] == {"key": "category", "values": [{"create": "hg-3-64"}, {"create": "aa-1-2-6"}, {"delete": "hg-9"}]}
+    assert "categoriesToAdd" not in sent
+
+
+@pytest.mark.asyncio
+async def test_definition_update_rejects_same_category_added_and_removed():
+    with pytest.raises(ValueError, match="adicionada e removida"):
+        await ShopifyOperations(SequenceClient([])).prepare_metafield_definition_update({"namespace": "shopify", "key": "color-pattern", "ownerType": "PRODUCT", "categoriesToAdd": ["hg-3-64"], "categoriesToRemove": ["hg-3-64"]})

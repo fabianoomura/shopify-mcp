@@ -829,12 +829,12 @@ class ShopifyOperations:
             raise ValueError("redirectNewHandle exige alteração de handle")
 
     async def list_pages(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = """query Pages($first:Int!,$after:String,$query:String){pages(first:$first,after:$after,query:$query,sortKey:UPDATED_AT,reverse:true){edges{cursor node{id title handle bodySummary isPublished publishedAt createdAt updatedAt templateSuffix seo{title description}}}pageInfo{hasNextPage endCursor}}}"""
+        query = """query Pages($first:Int!,$after:String,$query:String){pages(first:$first,after:$after,query:$query,sortKey:UPDATED_AT,reverse:true){edges{cursor node{id title handle bodySummary isPublished publishedAt createdAt updatedAt templateSuffix seoTitle:metafield(namespace:"global",key:"title_tag"){value} seoDescription:metafield(namespace:"global",key:"description_tag"){value}}}pageInfo{hasNextPage endCursor}}}"""
         result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after"), "query": args.get("query")})
         return _connection(result["data"], "pages")
 
     async def get_page(self, args: dict[str, Any]) -> dict[str, Any]:
-        result = await self.client.graphql("""query Page($id:ID!){page(id:$id){id title handle body bodySummary isPublished publishedAt createdAt updatedAt templateSuffix seo{title description}}}""", {"id": args["id"]})
+        result = await self.client.graphql("""query Page($id:ID!){page(id:$id){id title handle body bodySummary isPublished publishedAt createdAt updatedAt templateSuffix seoTitle:metafield(namespace:"global",key:"title_tag"){value} seoDescription:metafield(namespace:"global",key:"description_tag"){value}}}""", {"id": args["id"]})
         return {"page": result["data"]["page"]}
 
     async def prepare_page_create(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -1576,11 +1576,11 @@ class ShopifyOperations:
             if current is None or current.get("compareDigest") != item["compareDigest"]:
                 raise ShopifyError("Exclusão cancelada: o metafield mudou após a preparação")
         identifiers = [{key: item[key] for key in ("ownerId", "namespace", "key")} for item in args["metafields"]]
-        query = """mutation MetafieldsDelete($metafields:[MetafieldIdentifierInput!]!){metafieldsDelete(metafields:$metafields){deletedMetafields{ownerId namespace key} userErrors{field message code}}}"""
+        query = """mutation MetafieldsDelete($metafields:[MetafieldIdentifierInput!]!){metafieldsDelete(metafields:$metafields){deletedMetafields{ownerId namespace key} userErrors{field message}}}"""
         result = await self.client.graphql(query, {"metafields": identifiers})
         return {"success": True, "operation": "metafieldsDelete", **mutation_result(result, "metafieldsDelete")}
 
-    _METAFIELD_DEFINITION_FIELDS = "id name namespace key description ownerType type{name category} pinnedPosition validations{name value} access{admin storefront customerAccount}"
+    _METAFIELD_DEFINITION_FIELDS = "id name namespace key description ownerType type{name category} pinnedPosition validations{name value} access{admin storefront customerAccount} constraints{key values(first:250){nodes{value}}}"
 
     async def list_metafield_definitions(self, args: dict[str, Any]) -> dict[str, Any]:
         query = f"""query MetafieldDefinitions($ownerType:MetafieldOwnerType!,$first:Int!,$after:String,$query:String){{metafieldDefinitions(ownerType:$ownerType,first:$first,after:$after,query:$query){{edges{{cursor node{{{self._METAFIELD_DEFINITION_FIELDS}}}}}pageInfo{{hasNextPage endCursor}}}}}}"""
@@ -1604,7 +1604,12 @@ class ShopifyOperations:
 
     @staticmethod
     def _definition_update_input(args: dict[str, Any]) -> dict[str, Any]:
-        return {key: args[key] for key in ("namespace", "key", "ownerType", "name", "description", "validations") if key in args}
+        definition = {key: args[key] for key in ("namespace", "key", "ownerType", "name", "description", "validations") if key in args}
+        values = [{"create": category} for category in args.get("categoriesToAdd", [])]
+        values += [{"delete": category} for category in args.get("categoriesToRemove", [])]
+        if values:
+            definition["constraintsUpdates"] = {"key": "category", "values": values}
+        return definition
 
     async def prepare_metafield_definition_create(self, args: dict[str, Any]) -> dict[str, Any]:
         if await self._definition_by_identifier(args) is not None:
@@ -1621,9 +1626,11 @@ class ShopifyOperations:
         return {"success": True, "operation": "metafieldDefinitionCreate", **mutation_result(result, "metafieldDefinitionCreate")}
 
     async def prepare_metafield_definition_update(self, args: dict[str, Any]) -> dict[str, Any]:
-        changes = {key: args[key] for key in ("name", "description", "validations") if key in args}
+        changes = {key: args[key] for key in ("name", "description", "validations", "categoriesToAdd", "categoriesToRemove") if key in args}
         if not changes:
-            raise ValueError("Informe name, description e/ou validations para alterar")
+            raise ValueError("Informe name, description, validations e/ou categorias para alterar")
+        if set(args.get("categoriesToAdd", [])) & set(args.get("categoriesToRemove", [])):
+            raise ValueError("A mesma categoria não pode ser adicionada e removida")
         current = await self._definition_by_identifier(args)
         if current is None:
             raise ShopifyError("Definição de metafield não encontrada")
@@ -1869,7 +1876,7 @@ class ShopifyOperations:
         result = await self.client.graphql(query, mutation_args)
         return {"success": True, "operation": "metaobjectDelete", **mutation_result(result, "metaobjectDelete")}
 
-    _FILE_FIELDS = """__typename id alt createdAt updatedAt fileStatus fileErrors{code message details} ... on GenericFile{url mimeType originalFileSize} ... on MediaImage{mimeType status image{id url width height altText} originalSource{url width height}} ... on Video{status duration preview{status image{id url width height}} originalSource{url width height format mimeType} sources{url width height format mimeType}} ... on ExternalVideo{status host originUrl embeddedUrl} ... on Model3d{status originalSource{url filesize}}"""
+    _FILE_FIELDS = """__typename id alt createdAt updatedAt fileStatus fileErrors{code message details} ... on GenericFile{url mimeType originalFileSize} ... on MediaImage{mimeType status image{id url width height altText} originalSource{url fileSize}} ... on Video{status duration preview{status image{id url width height}} originalSource{url width height format mimeType} sources{url width height format mimeType}} ... on ExternalVideo{status host originUrl embeddedUrl} ... on Model3d{status originalSource{url filesize}}"""
 
     async def list_files(self, args: dict[str, Any]) -> dict[str, Any]:
         query = f"query Files($first:Int!,$after:String,$query:String){{files(first:$first,after:$after,query:$query){{edges{{cursor node{{{self._FILE_FIELDS}}}}}pageInfo{{hasNextPage endCursor}}}}}}"
@@ -2327,7 +2334,7 @@ class ShopifyOperations:
             filters.append(f"query:{json.dumps(args['query'], ensure_ascii=False)}")
         suffix = f"({','.join(filters)})" if filters else ""
         documents = {
-            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable requiresComponents selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping}} productVariantComponents{{edges{{node{{quantity productVariant{{id sku title price product{{id title handle}}}}}}}}}}}}}}}}}}}}}}}}",
+            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} category{{id fullName}} metafields{{edges{{node{{namespace key type value}}}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable requiresComponents selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping}} productVariantComponents{{edges{{node{{quantity productVariant{{id sku title price product{{id title handle}}}}}}}}}}}}}}}}}}}}}}}}",
             "PRODUCT_VARIANTS": f"{{productVariants{suffix}{{edges{{node{{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale selectedOptions{{name value}} product{{id title handle status}} inventoryItem{{id tracked requiresShipping}}}}}}}}}}",
             "COLLECTIONS": f"{{collections{suffix}{{edges{{node{{id title handle descriptionHtml sortOrder updatedAt productsCount{{count}} seo{{title description}} ruleSet{{appliedDisjunctively rules{{column relation condition conditionObject{{... on CollectionRuleMetafieldCondition{{metafieldDefinition{{id namespace key}}}}}}}}}}}}}}}}}}",
             "ORDERS": f"{{orders{suffix}{{edges{{node{{id name createdAt processedAt cancelledAt displayFinancialStatus currencyCode subtotalPriceSet{{shopMoney{{amount}}}} totalShippingPriceSet{{shopMoney{{amount}}}} totalDiscountsSet{{shopMoney{{amount}}}} currentTotalPriceSet{{shopMoney{{amount}}}} totalRefundedSet{{shopMoney{{amount}}}} discountCodes customAttributes{{key value}} lineItems{{edges{{node{{id discountAllocations{{allocatedAmountSet{{shopMoney{{amount}}}} discountApplication{{__typename value{{__typename ... on MoneyV2{{amount}} ... on PricingPercentageValue{{percentage}}}} ... on DiscountCodeApplication{{code}} ... on AutomaticDiscountApplication{{title}} ... on ManualDiscountApplication{{title}} ... on ScriptDiscountApplication{{title}}}}}}}}}}}}}}}}}}}}",
@@ -2642,6 +2649,146 @@ class ShopifyOperations:
         query = """mutation ProductOptionUpdate($productId:ID!,$option:OptionUpdateInput!,$optionValuesToAdd:[OptionValueCreateInput!],$optionValuesToUpdate:[OptionValueUpdateInput!],$optionValuesToDelete:[ID!],$variantStrategy:ProductOptionUpdateVariantStrategy!){productOptionUpdate(productId:$productId,option:$option,optionValuesToAdd:$optionValuesToAdd,optionValuesToUpdate:$optionValuesToUpdate,optionValuesToDelete:$optionValuesToDelete,variantStrategy:$variantStrategy){product{id title options{id name position optionValues{id name hasVariants}}} userErrors{field message code}}}"""
         result = await self.client.graphql(query, mutation_args)
         return {"success": True, "operation": "productOptionUpdate", **mutation_result(result, "productOptionUpdate")}
+
+    async def prepare_product_options_rename(self, args: dict[str, Any]) -> dict[str, Any]:
+        from_name, to_name, items = args["fromName"], args["toName"], args["items"]
+        batch_renames = args.get("valueRenames") or {}
+        if from_name == to_name and not batch_renames and not any(item.get("valueRenames") for item in items):
+            raise ValueError("fromName e toName devem ser diferentes (ou informe valueRenames)")
+        product_ids = [item["productId"] for item in items]
+        if len(set(product_ids)) != len(product_ids):
+            raise ValueError("Cada produto pode aparecer apenas uma vez no lote")
+        result = await self.client.graphql("""query OptionRenamePreview($ids:[ID!]!){nodes(ids:$ids){... on Product{id title handle options{id name optionValues{id name}}}}}""", {"ids": product_ids})
+        found = {node["id"]: node for node in result["data"]["nodes"] if node}
+        ready, already, skipped, samples = [], [], [], []
+        for item in items:
+            product = found.get(item["productId"])
+            option = next((opt for opt in (product or {}).get("options", []) if opt["id"] == item["optionId"]), None)
+            if product is None:
+                skipped.append({**item, "reason": "produto não encontrado"})
+                continue
+            if option is None:
+                skipped.append({**item, "reason": "a opção não pertence ao produto"})
+                continue
+            if option["name"] not in (from_name, to_name):
+                skipped.append({**item, "reason": f"nome atual é {option['name']!r}, não {from_name!r}"})
+                continue
+            values = option.get("optionValues") or []
+            value_renames = {**batch_renames, **(item.get("valueRenames") or {})}
+            updates = [{"id": value["id"], "name": value_renames[value["name"]]} for value in values if value["name"] in value_renames and value_renames[value["name"]] != value["name"]]
+            renamed_to = {update["id"]: update["name"] for update in updates}
+            final_names = [renamed_to.get(value["id"], value["name"]) for value in values]
+            if len(set(final_names)) != len(final_names):
+                skipped.append({**item, "reason": f"a troca de valores deixaria valores repetidos: {final_names}"})
+                continue
+            if option["name"] == to_name and not updates:
+                already.append(item["productId"])
+                continue
+            entry = {"productId": item["productId"], "optionId": item["optionId"]}
+            if updates:
+                entry["valuesToUpdate"] = updates
+            ready.append(entry)
+            if len(samples) < 5:
+                samples.append({"product": product["title"], "before": option["name"], "after": to_name, "values": {value["name"]: final for value, final in zip(values, final_names) if value["name"] != final}})
+        warnings = ["Variantes, SKU, estoque e preço ficam iguais.", "Aplique com items = applyItems. Cada produto é gravado separadamente: um erro não desfaz os anteriores."]
+        if any(item.get("valuesToUpdate") for item in ready):
+            warnings.insert(0, "Os valores trocados mudam o título das variantes.")
+        preview = {
+            "summary": {"requested": len(items), "ready": len(ready), "alreadyRenamed": len(already), "skipped": len(skipped), "withValueChanges": sum(1 for item in ready if item.get("valuesToUpdate"))},
+            "sample": samples, "skipped": skipped, "alreadyRenamed": already, "applyItems": ready, "variantStrategy": "LEAVE_AS_IS", "warnings": warnings,
+        }
+        if not ready:
+            return preview
+        token = self.confirmations.issue("shopify_product_options_rename", {"fromName": from_name, "toName": to_name, "items": ready})
+        return {**preview, **token}
+
+    async def product_options_rename(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = {"fromName": args["fromName"], "toName": args["toName"], "items": args["items"]}
+        self._require_write(args, "shopify_product_options_rename", mutation_args)
+        query = """mutation ProductOptionRename($productId:ID!,$option:OptionUpdateInput!,$optionValuesToUpdate:[OptionValueUpdateInput!],$variantStrategy:ProductOptionUpdateVariantStrategy!){productOptionUpdate(productId:$productId,option:$option,optionValuesToUpdate:$optionValuesToUpdate,variantStrategy:$variantStrategy){product{id options{id name optionValues{id name}}} userErrors{field message code}}}"""
+        renamed, errors = [], []
+        for item in args["items"]:
+            try:
+                variables = {"productId": item["productId"], "option": {"id": item["optionId"], "name": args["toName"]}, "variantStrategy": "LEAVE_AS_IS"}
+                if item.get("valuesToUpdate"):
+                    variables["optionValuesToUpdate"] = item["valuesToUpdate"]
+                result = await self.client.graphql(query, variables)
+                payload = mutation_result(result, "productOptionUpdate")
+                option = next((opt for opt in (payload.get("product") or {}).get("options", []) if opt["id"] == item["optionId"]), None)
+                returned = {value["id"]: value["name"] for value in (option or {}).get("optionValues") or []}
+                if option is None or option["name"] != args["toName"]:
+                    errors.append({**item, "error": "a opção não voltou com o novo nome"})
+                elif any(returned.get(value["id"]) != value["name"] for value in item.get("valuesToUpdate") or []):
+                    errors.append({**item, "error": "um ou mais valores não voltaram com o novo nome"})
+                else:
+                    renamed.append(item["productId"])
+            except ShopifyError as exc:
+                errors.append({**item, "error": str(exc), "details": getattr(exc, "details", None)})
+        return {"success": not errors, "operation": "productOptionUpdate (lote)", "summary": {"requested": len(args["items"]), "renamed": len(renamed), "errors": len(errors)}, "errors": errors}
+
+    async def _options_delete_batch_state(self, product_ids: list[str]) -> dict[str, Any]:
+        result = await self.client.graphql("""query OptionDeletePreview($ids:[ID!]!){nodes(ids:$ids){... on Product{id title options{id name optionValues{id name}} variantsCount{count}}}}""", {"ids": product_ids})
+        return {node["id"]: node for node in result["data"]["nodes"] if node}
+
+    async def prepare_product_options_delete_batch(self, args: dict[str, Any]) -> dict[str, Any]:
+        option_name, only_value, items = args["optionName"], args["onlyValue"], args["items"]
+        product_ids = [item["productId"] for item in items]
+        if len(set(product_ids)) != len(product_ids):
+            raise ValueError("Cada produto pode aparecer apenas uma vez no lote")
+        found = await self._options_delete_batch_state(product_ids)
+        ready, skipped, samples = [], [], []
+        for item in items:
+            product = found.get(item["productId"])
+            option = next((opt for opt in (product or {}).get("options", []) if opt["id"] == item["optionId"]), None)
+            if product is None:
+                skipped.append({**item, "reason": "produto não encontrado"})
+            elif option is None:
+                skipped.append({**item, "reason": "a opção não pertence ao produto (já removida?)"})
+            elif option["name"] != option_name:
+                skipped.append({**item, "reason": f"nome atual é {option['name']!r}, não {option_name!r}"})
+            elif [value["name"] for value in option["optionValues"]] != [only_value]:
+                skipped.append({**item, "reason": f"valores {[value['name'] for value in option['optionValues']]} não são só {only_value!r}"})
+            elif len(product["options"]) < 2:
+                skipped.append({**item, "reason": "é a única opção do produto"})
+            else:
+                ready.append({"productId": item["productId"], "optionId": item["optionId"]})
+                if len(samples) < 5:
+                    samples.append({"product": product["title"], "before": [opt["name"] for opt in product["options"]], "after": [opt["name"] for opt in product["options"] if opt["id"] != option["id"]], "variants": product["variantsCount"]["count"]})
+        preview = {
+            "summary": {"requested": len(items), "ready": len(ready), "skipped": len(skipped)},
+            "sample": samples, "skipped": skipped, "applyItems": ready, "strategy": "DEFAULT",
+            "warnings": [f"O título das variantes perde o '{only_value} /'.", "Variantes, SKU, código de barras, estoque e preço ficam iguais.", "Aplique com items = applyItems. Cada produto é gravado separadamente: um erro não desfaz os anteriores."],
+        }
+        if not ready:
+            return preview
+        token = self.confirmations.issue("shopify_product_options_delete_batch", {"optionName": option_name, "onlyValue": only_value, "items": ready})
+        return {**preview, **token}
+
+    async def product_options_delete_batch(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = {"optionName": args["optionName"], "onlyValue": args["onlyValue"], "items": args["items"]}
+        self._require_write(args, "shopify_product_options_delete_batch", mutation_args)
+        before = await self._options_delete_batch_state([item["productId"] for item in args["items"]])
+        query = """mutation ProductOptionsDeleteBatch($productId:ID!,$options:[ID!]!){productOptionsDelete(productId:$productId,options:$options,strategy:DEFAULT){deletedOptionsIds product{id options{id name} variantsCount{count}} userErrors{field message code}}}"""
+        deleted, errors = [], []
+        for item in args["items"]:
+            product = before.get(item["productId"])
+            option = next((opt for opt in (product or {}).get("options", []) if opt["id"] == item["optionId"]), None)
+            if option is None or option["name"] != args["optionName"] or [value["name"] for value in option["optionValues"]] != [args["onlyValue"]]:
+                errors.append({**item, "error": "a opção mudou desde o prepare; nada foi gravado neste produto"})
+                continue
+            try:
+                result = await self.client.graphql(query, {"productId": item["productId"], "options": [item["optionId"]]})
+                payload = mutation_result(result, "productOptionsDelete")
+                after = payload.get("product") or {}
+                if any(opt["id"] == item["optionId"] for opt in after.get("options", [])):
+                    errors.append({**item, "error": "a opção continua no produto"})
+                elif (after.get("variantsCount") or {}).get("count") != product["variantsCount"]["count"]:
+                    errors.append({**item, "error": f"número de variantes mudou: {product['variantsCount']['count']} → {(after.get('variantsCount') or {}).get('count')}"})
+                else:
+                    deleted.append(item["productId"])
+            except ShopifyError as exc:
+                errors.append({**item, "error": str(exc), "details": getattr(exc, "details", None)})
+        return {"success": not errors, "operation": "productOptionsDelete (lote)", "summary": {"requested": len(args["items"]), "deleted": len(deleted), "errors": len(errors)}, "errors": errors}
 
     async def prepare_product_options_delete(self, args: dict[str, Any]) -> dict[str, Any]:
         product = await self._option_preview(args["productId"])
