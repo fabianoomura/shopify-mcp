@@ -85,3 +85,24 @@ async def test_order_cancel_rejects_active_return_before_token():
     payload = {"orderId": order["id"], "reason": "CUSTOMER", "refundOriginalPaymentMethods": False, "restock": False, "notifyCustomer": False, "staffNote": "Teste"}
     with pytest.raises(ShopifyError, match="devolução ativa"):
         await ShopifyOperations(client).prepare_order_cancel(payload)
+
+
+@pytest.mark.asyncio
+async def test_orders_attribution_has_no_contact_fields_and_marks_pii():
+    node = {"id": "gid://shopify/Order/1", "name": "#1", "clientIp": "203.0.113.7", "sourceName": "web",
+            "customerJourneySummary": {"ready": True, "lastVisit": {"source": "google", "utmParameters": {"source": "google"}}}}
+    client = SequenceClient([{"data": {"orders": {"edges": [{"cursor": "c1", "node": node}], "pageInfo": {"hasNextPage": False, "endCursor": "c1"}}}}])
+    result = await ShopifyOperations(client).list_orders_attribution({"first": 10, "query": "created_at:>=2026-10-01"})
+    assert result["containsPii"] is True
+    assert result["items"] == [node]
+    query, variables = client.calls[0]
+    assert variables == {"first": 10, "after": None, "query": "created_at:>=2026-10-01"}
+    for field in ("email", "phone", "displayName", "billingAddress", "shippingAddress", "customer{"):
+        assert field not in query
+    assert "clientIp" in query and "customerJourneySummary" in query
+
+
+def test_orders_attribution_is_read_only_in_every_profile():
+    item = BY_NAME["shopify_list_orders_attribution"]
+    assert item.write is False
+    assert "readonly" in item.profiles

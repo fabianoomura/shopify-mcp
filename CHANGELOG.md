@@ -3,6 +3,12 @@
 ## Não lançado
 
 ### Adicionado
+- **`shopify_list_orders_attribution` (leitura, todos os perfis):** pedidos com os campos da atribuição de
+  marketing — valor, estorno, status, `sourceName`/app (loja, rascunho, TikTok), `clientIp` e
+  `customerJourneySummary` (primeira/última visita com UTMs, página de entrada, nº de momentos).
+  Sem nome, e-mail ou telefone; resposta marcada `containsPii` por causa do IP. Pedido do agente de
+  marketing (Dory, `mooui_dory`) para ligar pedidos sem evento do pixel. Testado na loja em 01/10/2026:
+  pedidos web trazem IP e jornada; TikTok sem IP.
 - **Composição de bundle (Shopify Bundles nativo):** os reads de produto/variante
   (`get_product`, `get_product_by_handle`, `get_product_360`, `get_product_variant`,
   `get_product_variant_by_sku`) agora trazem `requiresComponents` e
