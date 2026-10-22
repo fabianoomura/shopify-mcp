@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import ipaddress
 import json
 from typing import Any
@@ -35,7 +35,29 @@ def _search_exact(field: str, value: str) -> str:
     return f'{field}:"{escaped}"'
 
 
-DISCOUNT_CODE_FRAGMENTS = """__typename ... on DiscountCodeBasic{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit} ... on DiscountCodeBxgy{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit} ... on DiscountCodeFreeShipping{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit} ... on DiscountCodeApp{title status startsAt endsAt asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit}}"""
+DISCOUNT_CODE_FRAGMENTS = """__typename ... on DiscountCodeBasic{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit customerGets{items{... on AllDiscountItems{allItems} ... on DiscountCollections{collections(first:20){nodes{id title}}} ... on DiscountProducts{products(first:20){nodes{id title}}}}}} ... on DiscountCodeBxgy{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit} ... on DiscountCodeFreeShipping{title status startsAt endsAt summary asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit} ... on DiscountCodeApp{title status startsAt endsAt asyncUsageCount codesCount{count} codes(first:20){nodes{id code}} combinesWith{orderDiscounts productDiscounts shippingDiscounts} appliesOncePerCustomer usageLimit}"""
+_DISCOUNT_DATE_FIELDS = "title status startsAt endsAt"
+DISCOUNT_DATES_NODE = (
+    "... on DiscountCodeNode{id codeDiscount{__typename "
+    + " ".join(f"... on DiscountCode{kind}{{{_DISCOUNT_DATE_FIELDS}}}" for kind in ("Basic", "Bxgy", "FreeShipping", "App"))
+    + "}} ... on DiscountAutomaticNode{id automaticDiscount{__typename "
+    + " ".join(f"... on DiscountAutomatic{kind}{{{_DISCOUNT_DATE_FIELDS}}}" for kind in ("Basic", "Bxgy", "FreeShipping", "App"))
+    + "}}"
+)
+# __typename do desconto -> (mutation de update, nome do argumento de input, campo do nó no retorno)
+_DISCOUNT_DATES_MUTATIONS = {
+    "DiscountCodeBasic": ("discountCodeBasicUpdate", "basicCodeDiscount", "DiscountCodeBasicInput", "codeDiscountNode"),
+    "DiscountCodeBxgy": ("discountCodeBxgyUpdate", "bxgyCodeDiscount", "DiscountCodeBxgyInput", "codeDiscountNode"),
+    "DiscountCodeFreeShipping": ("discountCodeFreeShippingUpdate", "freeShippingCodeDiscount", "DiscountCodeFreeShippingInput", "codeDiscountNode"),
+    "DiscountCodeApp": ("discountCodeAppUpdate", "codeAppDiscount", "DiscountCodeAppUpdateInput", "codeDiscountNode"),
+    "DiscountAutomaticBasic": ("discountAutomaticBasicUpdate", "automaticBasicDiscount", "DiscountAutomaticBasicInput", "automaticDiscountNode"),
+    "DiscountAutomaticBxgy": ("discountAutomaticBxgyUpdate", "automaticBxgyDiscount", "DiscountAutomaticBxgyInput", "automaticDiscountNode"),
+    "DiscountAutomaticFreeShipping": ("discountAutomaticFreeShippingUpdate", "freeShippingAutomaticDiscount", "DiscountAutomaticFreeShippingInput", "automaticDiscountNode"),
+    "DiscountAutomaticApp": ("discountAutomaticAppUpdate", "automaticAppDiscount", "DiscountAutomaticAppUpdateInput", "automaticDiscountNode"),
+}
+
+_DISCOUNT_ITEMS = "... on AllDiscountItems{allItems} ... on DiscountCollections{collections(first:20){nodes{id title}}} ... on DiscountProducts{products(first:20){nodes{id title}}}"
+AUTOMATIC_DISCOUNT_FRAGMENTS = f"""__typename ... on DiscountAutomaticBxgy{{title status startsAt endsAt summary asyncUsageCount usesPerOrderLimit combinesWith{{orderDiscounts productDiscounts shippingDiscounts}} customerBuys{{value{{... on DiscountQuantity{{quantity}} ... on DiscountPurchaseAmount{{amount}}}} items{{{_DISCOUNT_ITEMS}}}}} customerGets{{value{{... on DiscountOnQuantity{{quantity{{quantity}} effect{{... on DiscountPercentage{{percentage}}}}}}}} items{{{_DISCOUNT_ITEMS}}}}}}} ... on DiscountAutomaticBasic{{title status startsAt endsAt summary asyncUsageCount combinesWith{{orderDiscounts productDiscounts shippingDiscounts}}}} ... on DiscountAutomaticFreeShipping{{title status startsAt endsAt summary asyncUsageCount combinesWith{{orderDiscounts productDiscounts shippingDiscounts}}}} ... on DiscountAutomaticApp{{title status startsAt endsAt combinesWith{{orderDiscounts productDiscounts shippingDiscounts}}}}"""
 
 
 def _product_input(args: dict[str, Any], *, include_id: bool) -> dict[str, Any]:
@@ -60,15 +82,96 @@ _RULE_RELATIONS = {
     "VENDOR": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
     "VARIANT_TITLE": {"EQUALS", "NOT_EQUALS", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS"},
     "VARIANT_PRICE": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
-    "VARIANT_COMPARE_AT_PRICE": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
+    "VARIANT_COMPARE_AT_PRICE": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_SET", "IS_NOT_SET"},
     "VARIANT_INVENTORY": {"EQUALS", "GREATER_THAN", "LESS_THAN"},
     "VARIANT_WEIGHT": {"EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"},
-    "IS_PRICE_REDUCED": {"IS_SET", "IS_NOT_SET"},
-    "PRODUCT_TAXONOMY_NODE_ID": {"EQUALS", "NOT_EQUALS"},
     "PRODUCT_CATEGORY_ID": {"EQUALS", "NOT_EQUALS"},
     "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS": {"EQUALS", "NOT_EQUALS"},
+    "METAFIELD_STRING_LIST": {"EQUALS"},
+    "METAFIELD_METAOBJECT_LIST": {"EQUALS"},
 }
 _RULE_NEGATIVE = {"NOT_EQUALS", "NOT_CONTAINS", "IS_NOT_SET"}
+# API 2026-07: ruleSet saiu de CollectionCreateInput/CollectionUpdateInput; regras viram uma fonte de condições.
+_TEXT_RELATION = {"EQUALS": "EQUALS", "NOT_EQUALS": "NOT_EQUALS", "CONTAINS": "CONTAINS", "NOT_CONTAINS": "DOES_NOT_CONTAIN", "STARTS_WITH": "STARTS_WITH", "ENDS_WITH": "ENDS_WITH"}
+_TEXT_CONDITION = {"TITLE": "productTitle", "TYPE": "productType", "VENDOR": "productVendor", "VARIANT_TITLE": "variantTitle"}
+_RULE_SOURCE_TITLE = "Condições (MCP)"
+
+
+def _rule_to_condition(rule: dict[str, Any], currency: str = "BRL") -> dict[str, Any]:
+    column, relation, value = rule["column"], rule["relation"], rule["condition"]
+    # A Shopify exige matchType ALL nas relações negativas (NOT_TAGGED_WITH, NOT_EQUALS, DOES_NOT_CONTAIN).
+    match = "ALL" if relation in _RULE_NEGATIVE else "ANY"
+    if column == "TAG":
+        return {"productTag": {"relation": "TAGGED_WITH" if relation == "EQUALS" else "NOT_TAGGED_WITH", "values": [value], "matchType": match}}
+    if column in _TEXT_CONDITION:
+        return {_TEXT_CONDITION[column]: {"relation": _TEXT_RELATION[relation], "values": [value], "matchType": match}}
+    if column in ("VARIANT_PRICE", "VARIANT_COMPARE_AT_PRICE"):
+        key = "variantPrice" if column == "VARIANT_PRICE" else "variantCompareAtPrice"
+        if relation in ("IS_SET", "IS_NOT_SET"):
+            return {key: {"relation": relation}}
+        return {key: {"relation": relation, "value": {"amount": value, "currencyCode": currency}}}
+    if column == "VARIANT_INVENTORY":
+        return {"variantInventory": {"relation": relation, "value": int(value)}}
+    if column == "VARIANT_WEIGHT":
+        parts = value.split()
+        return {"variantWeight": {"relation": relation, "value": {"value": float(parts[0].replace(",", ".")), "unit": parts[1].upper() if len(parts) > 1 else "KILOGRAMS"}}}
+    if column in ("PRODUCT_CATEGORY_ID", "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS"):
+        category = value if value.startswith("gid://") else f"gid://shopify/TaxonomyCategory/{value}"
+        return {"productCategory": {"relation": relation, "matchType": match, "values": [{"categoryId": category, "includeDescendants": column.endswith("WITH_DESCENDANTS")}]}}
+    if column == "METAFIELD_STRING_LIST":
+        return {"metafieldStringList": {"definitionId": rule["definitionId"], "relation": "INCLUDES", "values": [value], "matchType": "ANY"}}
+    if column == "METAFIELD_METAOBJECT_LIST":
+        return {"metafieldMetaobjectList": {"definitionId": rule["definitionId"], "relation": "INCLUDES", "values": [value], "matchType": "ANY"}}
+    raise ValueError(f"Coluna {column} não suportada")
+
+
+def _rule_set_to_source(rule_set: dict[str, Any]) -> dict[str, Any]:
+    return {"source": {"title": _RULE_SOURCE_TITLE, "inclusion": {"matchType": "ANY" if rule_set["appliedDisjunctively"] else "ALL", "conditions": [_rule_to_condition(rule) for rule in rule_set["rules"]]}}}
+
+
+_SUB_COLLECTIONS_PER_SOURCE = 10  # limite da Shopify por fonte ("Too many sub-collections" com 11)
+
+
+def _sub_collections_sources(ids: list[str]) -> list[dict[str, Any]]:
+    """Uma fonte de subcoleções por bloco de 10 IDs (a Shopify recusa mais de 10 por fonte)."""
+    chunks = [list(ids[i:i + _SUB_COLLECTIONS_PER_SOURCE]) for i in range(0, len(ids), _SUB_COLLECTIONS_PER_SOURCE)]
+    if len(chunks) == 1:
+        return [{"subCollections": {"title": "Subcoleções (MCP)", "collectionIds": chunks[0]}}]
+    return [{"subCollections": {"title": f"Subcoleções (MCP) {n}/{len(chunks)}", "collectionIds": chunk}} for n, chunk in enumerate(chunks, 1)]
+
+
+_SOURCES_SELECTION = "sources{__typename id title ... on CollectionConditionsSource{inclusion{matchType conditions{__typename id} selections(first:1){nodes{product{id}}}}} ... on CollectionSubCollectionsSource{collections{id title handle}}}"
+
+
+def _source_summary(sources: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    summary = []
+    for source in sources or []:
+        item = {"type": source.get("__typename"), "id": source.get("id"), "title": source.get("title")}
+        inclusion = source.get("inclusion")
+        if inclusion is not None:
+            item["conditions"] = len(inclusion.get("conditions") or [])
+            item["hasSelections"] = bool(((inclusion.get("selections") or {}).get("nodes")))
+        if "collections" in source:
+            item["collections"] = [c.get("handle") or c.get("id") for c in source.get("collections") or []]
+        summary.append(item)
+    return summary
+
+
+def _sources_to_replace(sources: list[dict[str, Any]] | None, *, rules: bool, sub: bool) -> list[str]:
+    """IDs das fontes que a nova regra/subcoleção substitui. Recusa apagar fonte de condições que também tem seleções manuais."""
+    ids = []
+    for source in sources or []:
+        kind = source.get("__typename")
+        if rules and kind == "CollectionConditionsSource":
+            inclusion = source.get("inclusion") or {}
+            if not inclusion.get("conditions"):
+                continue  # fonte só de seleções manuais: fica
+            if (inclusion.get("selections") or {}).get("nodes"):
+                raise ValueError("A fonte de condições atual também tem produtos escolhidos à mão; ajuste no admin para não perder a seleção.")
+            ids.append(source["id"])
+        if sub and kind == "CollectionSubCollectionsSource":
+            ids.append(source["id"])
+    return ids
 
 
 def _rule_set_warnings(rule_set: dict[str, Any] | None) -> list[str]:
@@ -80,6 +183,8 @@ def _rule_set_warnings(rule_set: dict[str, Any] | None) -> list[str]:
         allowed = _RULE_RELATIONS[rule["column"]]
         if rule["relation"] not in allowed:
             raise ValueError(f"Relação {rule['relation']} não é aceita para {rule['column']}; use uma de {sorted(allowed)}")
+        if rule["column"].startswith("METAFIELD_") and not rule.get("definitionId"):
+            raise ValueError(f"{rule['column']} exige definitionId (GID da definição do metafield)")
     seen: set[tuple[str, str, str]] = set()
     for rule in rules:
         key = (rule["column"], rule["relation"], rule["condition"])
@@ -112,7 +217,7 @@ def _grouped_condition_warning(current: dict[str, Any] | None) -> str | None:
 
 
 def _collection_input(args: dict[str, Any], *, include_id: bool) -> dict[str, Any]:
-    fields = ("title", "descriptionHtml", "handle", "seo", "sortOrder", "templateSuffix", "ruleSet")
+    fields = ("title", "descriptionHtml", "handle", "seo", "sortOrder", "templateSuffix", "ruleSet", "subCollectionIds")
     result = {field: args[field] for field in fields if field in args}
     if include_id:
         result["id"] = args["id"]
@@ -822,6 +927,247 @@ class ShopifyOperations:
         result = await self.client.graphql("""mutation DiscountCodeDelete($id:ID!){discountCodeDelete(id:$id){deletedCodeDiscountId userErrors{field message code}}}""", mutation_args)
         return {"success": True, "operation": "discountCodeDelete", **mutation_result(result, "discountCodeDelete")}
 
+    async def list_automatic_discounts(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = f"""query AutomaticDiscounts($first:Int!,$after:String,$query:String){{automaticDiscountNodes(first:$first,after:$after,query:$query,reverse:true){{edges{{cursor node{{id automaticDiscount{{{AUTOMATIC_DISCOUNT_FRAGMENTS}}}}}}}pageInfo{{hasNextPage endCursor}}}}}}"""
+        result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after"), "query": args.get("query")})
+        return _connection(result["data"], "automaticDiscountNodes")
+
+    async def get_automatic_discount(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"automaticDiscountNode": await self._automatic_discount_preview(args["id"])}
+
+    async def _automatic_discount_preview(self, discount_id: str) -> dict[str, Any]:
+        query = f"""query AutomaticDiscount($id:ID!){{automaticDiscountNode(id:$id){{id automaticDiscount{{{AUTOMATIC_DISCOUNT_FRAGMENTS}}}}}}}"""
+        result = await self.client.graphql(query, {"id": discount_id})
+        node = result["data"]["automaticDiscountNode"]
+        if node is None:
+            raise ShopifyError("Desconto automático não encontrado")
+        return node
+
+    @staticmethod
+    def _bxgy_items(args: dict[str, Any], side: str) -> dict[str, Any]:
+        if args[f"{side}TargetType"] == "PRODUCTS":
+            return {"products": {"productsToAdd": args[f"{side}ProductIds"]}}
+        return {"collections": {"add": args[f"{side}CollectionIds"]}}
+
+    @staticmethod
+    def _validate_automatic_bxgy_shape(args: dict[str, Any]) -> list[str]:
+        if ("buysQuantity" in args) == ("buysMinimumAmount" in args):
+            raise ValueError("Informe exatamente um entre buysQuantity e buysMinimumAmount")
+        ids = []
+        for side in ("buys", "gets"):
+            target = args[f"{side}TargetType"]
+            wanted, other = (f"{side}ProductIds", f"{side}CollectionIds") if target == "PRODUCTS" else (f"{side}CollectionIds", f"{side}ProductIds")
+            if wanted not in args:
+                raise ValueError(f"{side}TargetType {target} exige {wanted}")
+            if other in args:
+                raise ValueError(f"Campos incompatíveis com {side}TargetType {target}: {other}")
+            ids.extend(args[wanted])
+        if args.get("endsAt") is not None:
+            starts = datetime.fromisoformat(args["startsAt"].replace("Z", "+00:00"))
+            ends = datetime.fromisoformat(args["endsAt"].replace("Z", "+00:00"))
+            if ends <= starts:
+                raise ValueError("endsAt deve ser posterior a startsAt")
+        return list(dict.fromkeys(ids))
+
+    @classmethod
+    def _automatic_bxgy_input(cls, args: dict[str, Any]) -> dict[str, Any]:
+        buys_value = {"quantity": str(args["buysQuantity"])} if "buysQuantity" in args else {"amount": args["buysMinimumAmount"]}
+        value: dict[str, Any] = {
+            "title": args["title"], "startsAt": args["startsAt"], "combinesWith": args["combinesWith"],
+            "customerBuys": {"value": buys_value, "items": cls._bxgy_items(args, "buys")},
+            "customerGets": {
+                "value": {"discountOnQuantity": {"quantity": str(args["getsQuantity"]), "effect": {"percentage": args["getsPercentage"]}}},
+                "items": cls._bxgy_items(args, "gets"),
+            },
+        }
+        if "endsAt" in args:
+            value["endsAt"] = args["endsAt"]
+        if args.get("usesPerOrderLimit") is not None:
+            value["usesPerOrderLimit"] = str(args["usesPerOrderLimit"])
+        return value
+
+    async def prepare_discount_automatic_bxgy_create(self, args: dict[str, Any]) -> dict[str, Any]:
+        ids = self._validate_automatic_bxgy_shape(args)
+        result = await self.client.graphql("""query BxgyPreview($ids:[ID!]!,$title:String!){nodes(ids:$ids){__typename ... on Product{id title status} ... on Collection{id title productsCount{count}}} automaticDiscountNodes(first:20,query:$title){nodes{id automaticDiscount{__typename ... on DiscountAutomaticBxgy{title status}}}}}""", {"ids": ids, "title": _search_exact("title", args["title"])})
+        found = {node["id"]: node for node in result["data"]["nodes"] if node is not None}
+        missing = sorted(set(ids) - set(found))
+        if missing:
+            raise ShopifyError("GIDs de produtos ou coleções não encontrados", details={"invalidIds": missing})
+        warnings = ["Desconto automático: vale para todos os clientes, sem código, a partir de startsAt.",
+                    "Os itens ganhos precisam estar no carrinho; a Shopify desconta os itens elegíveis de menor preço."]
+        same_title = [node["id"] for node in result["data"]["automaticDiscountNodes"]["nodes"] if (node.get("automaticDiscount") or {}).get("title") == args["title"]]
+        if same_title:
+            warnings.append(f"Já existe desconto automático com o título {args['title']!r}: {same_title}")
+        if not args["combinesWith"]["productDiscounts"]:
+            warnings.append("combinesWith.productDiscounts=false: no mesmo carrinho, só um desconto de produto vale.")
+        if args.get("usesPerOrderLimit") is None:
+            warnings.append("Sem usesPerOrderLimit: a promoção se repete no pedido (ex.: 6 itens no 3x2 = 2 grátis).")
+        discount_input = self._automatic_bxgy_input(args)
+        mutation_args = {"automaticBxgyDiscount": discount_input}
+        token = self.confirmations.issue("shopify_create_discount_automatic_bxgy", mutation_args)
+        return {"title": args["title"], "resolvedTargets": list(found.values()), "shopifyInput": discount_input, "warnings": warnings, **token}
+
+    async def create_discount_automatic_bxgy(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._validate_automatic_bxgy_shape(args)
+        mutation_args = {"automaticBxgyDiscount": self._automatic_bxgy_input(args)}
+        self._require_write(args, "shopify_create_discount_automatic_bxgy", mutation_args)
+        query = f"""mutation DiscountAutomaticBxgyCreate($automaticBxgyDiscount:DiscountAutomaticBxgyInput!){{discountAutomaticBxgyCreate(automaticBxgyDiscount:$automaticBxgyDiscount){{automaticDiscountNode{{id automaticDiscount{{{AUTOMATIC_DISCOUNT_FRAGMENTS}}}}} userErrors{{field message code}}}}}}"""
+        result = await self.client.graphql(query, mutation_args)
+        return {"success": True, "operation": "discountAutomaticBxgyCreate", **mutation_result(result, "discountAutomaticBxgyCreate")}
+
+    async def prepare_discount_automatic_status_change(self, args: dict[str, Any]) -> dict[str, Any]:
+        node = await self._automatic_discount_preview(args["id"])
+        current = node["automaticDiscount"].get("status")
+        desired = "ACTIVE" if args["action"] == "ACTIVATE" else "EXPIRED"
+        mutation_args = {"id": args["id"], "action": args["action"]}
+        token = self.confirmations.issue("shopify_set_discount_automatic_status", mutation_args)
+        if args["action"] == "ACTIVATE":
+            warnings = ["Ativar pode mover startsAt para agora e remover endsAt quando o desconto estiver expirado."]
+        else:
+            warnings = ["Desativar encerra a vigência agora; o desconto permanece armazenado e pode ser reativado."]
+        return {"discount": node, "beforeStatus": current, "expectedStatus": desired, "willChange": current != desired, "warnings": warnings, **token}
+
+    async def set_discount_automatic_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = {"id": args["id"], "action": args["action"]}
+        self._require_write(args, "shopify_set_discount_automatic_status", mutation_args)
+        field = "discountAutomaticActivate" if args["action"] == "ACTIVATE" else "discountAutomaticDeactivate"
+        query = f"""mutation DiscountAutomaticStatus($id:ID!){{{field}(id:$id){{automaticDiscountNode{{id automaticDiscount{{{AUTOMATIC_DISCOUNT_FRAGMENTS}}}}} userErrors{{field message code}}}}}}"""
+        result = await self.client.graphql(query, {"id": args["id"]})
+        return {"success": True, "operation": field, **mutation_result(result, field)}
+
+    async def prepare_discount_automatic_delete(self, args: dict[str, Any]) -> dict[str, Any]:
+        node = await self._automatic_discount_preview(args["id"])
+        mutation_args = {"id": args["id"]}
+        token = self.confirmations.issue("shopify_delete_discount_automatic", mutation_args)
+        return {"discount": node, "irreversible": True, "warnings": ["A exclusão é permanente. Prefira desativar quando histórico e possível reativação forem importantes."], **token}
+
+    async def delete_discount_automatic(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = {"id": args["id"]}
+        self._require_write(args, "shopify_delete_discount_automatic", mutation_args)
+        result = await self.client.graphql("""mutation DiscountAutomaticDelete($id:ID!){discountAutomaticDelete(id:$id){deletedAutomaticDiscountId userErrors{field message code}}}""", mutation_args)
+        return {"success": True, "operation": "discountAutomaticDelete", **mutation_result(result, "discountAutomaticDelete")}
+
+    @staticmethod
+    def _discount_dates_args(args: dict[str, Any]) -> dict[str, Any]:
+        if "startsAt" not in args and "endsAt" not in args:
+            raise ValueError("Informe startsAt e/ou endsAt")
+        dates = {field: args[field] for field in ("startsAt", "endsAt") if field in args}
+        if dates.get("startsAt") and dates.get("endsAt"):
+            starts = datetime.fromisoformat(dates["startsAt"].replace("Z", "+00:00"))
+            ends = datetime.fromisoformat(dates["endsAt"].replace("Z", "+00:00"))
+            if ends <= starts:
+                raise ValueError("endsAt deve ser posterior a startsAt")
+        return {"ids": args["ids"], **dates}
+
+    async def _discount_dates_nodes(self, ids: list[str]) -> list[dict[str, Any]]:
+        result = await self.client.graphql(f"""query DiscountDates($ids:[ID!]!){{nodes(ids:$ids){{{DISCOUNT_DATES_NODE}}}}}""", {"ids": ids})
+        found = {node["id"]: node for node in result["data"]["nodes"] if node}
+        missing = sorted(set(ids) - set(found))
+        if missing:
+            raise ShopifyError("Descontos não encontrados", details={"invalidIds": missing})
+        discounts = []
+        for discount_id in ids:
+            node = found[discount_id]
+            discount = node.get("codeDiscount") or node.get("automaticDiscount") or {}
+            if discount.get("__typename") not in _DISCOUNT_DATES_MUTATIONS:
+                raise ShopifyError("Tipo de desconto sem suporte para alterar datas", details={"id": discount_id, "type": discount.get("__typename")})
+            discounts.append({"id": discount_id, **discount})
+        return discounts
+
+    async def prepare_discount_dates_update(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = self._discount_dates_args(args)
+        discounts = await self._discount_dates_nodes(args["ids"])
+        changes, warnings = [], []
+        for discount in discounts:
+            after = {"startsAt": mutation_args.get("startsAt", discount["startsAt"]), "endsAt": mutation_args.get("endsAt", discount["endsAt"])}
+            if after["endsAt"] is not None and datetime.fromisoformat(after["endsAt"].replace("Z", "+00:00")) <= datetime.fromisoformat(after["startsAt"].replace("Z", "+00:00")):
+                raise ValueError(f"{discount['title']}: endsAt ficaria antes do startsAt atual ({discount['startsAt']})")
+            changes.append({"id": discount["id"], "type": discount["__typename"], "title": discount["title"], "status": discount["status"],
+                            "before": {"startsAt": discount["startsAt"], "endsAt": discount["endsAt"]}, "after": after})
+        now = datetime.now(UTC)
+        if mutation_args.get("endsAt") and datetime.fromisoformat(mutation_args["endsAt"].replace("Z", "+00:00")) <= now:
+            warnings.append("endsAt no passado/agora: os descontos param de valer imediatamente (equivale a desativar).")
+        if mutation_args.get("startsAt") and datetime.fromisoformat(mutation_args["startsAt"].replace("Z", "+00:00")) > now:
+            warnings.append("startsAt no futuro: descontos ativos passam a SCHEDULED até a data.")
+        if "endsAt" in mutation_args and mutation_args["endsAt"] is None:
+            warnings.append("endsAt=null remove a data de fim (desconto sem previsão de término).")
+        token = self.confirmations.issue("shopify_update_discount_dates", mutation_args)
+        return {"changes": changes, "count": len(changes), "warnings": warnings, **token}
+
+    async def update_discount_dates(self, args: dict[str, Any]) -> dict[str, Any]:
+        mutation_args = self._discount_dates_args(args)
+        self._require_write(args, "shopify_update_discount_dates", mutation_args)
+        discounts = await self._discount_dates_nodes(args["ids"])
+        dates = {field: mutation_args[field] for field in ("startsAt", "endsAt") if field in mutation_args}
+        results, failed = [], 0
+        for discount in discounts:
+            field, input_name, input_type, node_field = _DISCOUNT_DATES_MUTATIONS[discount["__typename"]]
+            query = f"""mutation DiscountDates($id:ID!,$input:{input_type}!){{{field}(id:$id,{input_name}:$input){{{node_field}{{{DISCOUNT_DATES_NODE}}} userErrors{{field message code}}}}}}"""
+            try:
+                result = mutation_result(await self.client.graphql(query, {"id": discount["id"], "input": dates}), field)
+                node = result[node_field]
+                results.append({"id": discount["id"], "success": True, "discount": node.get("codeDiscount") or node.get("automaticDiscount")})
+            except ShopifyError as exc:
+                failed += 1
+                results.append({"id": discount["id"], "success": False, "title": discount["title"], "error": str(exc), "details": exc.details})
+        return {"success": failed == 0, "operation": "discountDatesUpdate", "updated": len(results) - failed, "failed": failed, "results": results}
+
+    @staticmethod
+    def _discount_items_diff(current: dict[str, Any], args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        target = args["targetType"]
+        warnings = []
+        if target == "ALL":
+            return {"all": True}, warnings
+        key, ids_field = ("collections", "collectionIds") if target == "COLLECTIONS" else ("products", "productIds")
+        wanted = args[ids_field]
+        existing = [node["id"] for node in ((current.get(key) or {}).get("nodes") or [])]
+        if len(existing) >= 20:
+            raise ShopifyError(f"O cupom tem 20+ {key} e o preview só lê 20; troca recusada para não deixar alvos antigos")
+        if not existing and current:
+            warnings.append(f"O cupom hoje não usa {key}; a Shopify troca o tipo de alvo para {key}.")
+        add_key, remove_key = ("add", "remove") if key == "collections" else ("productsToAdd", "productsToRemove")
+        value: dict[str, Any] = {add_key: [item for item in wanted if item not in existing]}
+        to_remove = [item for item in existing if item not in wanted]
+        if to_remove:
+            value[remove_key] = to_remove
+        return {key: value}, warnings
+
+    async def _discount_code_items_state(self, args: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[str]]:
+        if args["targetType"] == "COLLECTIONS" and "collectionIds" not in args or args["targetType"] == "PRODUCTS" and "productIds" not in args:
+            raise ValueError(f"{args['targetType']} exige {'collectionIds' if args['targetType'] == 'COLLECTIONS' else 'productIds'}")
+        if args["targetType"] != "COLLECTIONS" and "collectionIds" in args or args["targetType"] != "PRODUCTS" and "productIds" in args:
+            raise ValueError(f"Campos incompatíveis com {args['targetType']}")
+        ids = args.get("collectionIds") or args.get("productIds") or []
+        result = await self.client.graphql(f"""query DiscountItems($id:ID!,$ids:[ID!]!){{codeDiscountNode(id:$id){{id codeDiscount{{{DISCOUNT_CODE_FRAGMENTS}}}}} nodes(ids:$ids){{__typename ... on Product{{id title status}} ... on Collection{{id title productsCount{{count}}}}}}}}""", {"id": args["id"], "ids": ids})
+        node = result["data"]["codeDiscountNode"]
+        if node is None:
+            raise ShopifyError("Cupom não encontrado")
+        if node["codeDiscount"].get("__typename") != "DiscountCodeBasic":
+            raise ShopifyError("Só cupons de percentual/valor (DiscountCodeBasic) têm alvo alterável por esta tool", details={"type": node["codeDiscount"].get("__typename")})
+        found = [item for item in result["data"]["nodes"] if item]
+        missing = sorted(set(ids) - {item["id"] for item in found})
+        if missing:
+            raise ShopifyError("GIDs de alvo não encontrados", details={"invalidIds": missing})
+        current = node["codeDiscount"]["customerGets"]["items"]
+        items, warnings = self._discount_items_diff(current, args)
+        mutation_args = {"id": args["id"], "basicCodeDiscount": {"customerGets": {"items": items}}}
+        return node, found, mutation_args, warnings
+
+    async def prepare_discount_code_items_update(self, args: dict[str, Any]) -> dict[str, Any]:
+        node, found, mutation_args, warnings = await self._discount_code_items_state(args)
+        warnings.append("Só o alvo (itens em que o cupom vale) muda; valor, público, vigência e combinações ficam iguais.")
+        token = self.confirmations.issue("shopify_update_discount_code_items", mutation_args)
+        return {"discount": {"id": node["id"], "title": node["codeDiscount"]["title"], "summary": node["codeDiscount"].get("summary")},
+                "before": node["codeDiscount"]["customerGets"]["items"], "after": found if args["targetType"] != "ALL" else {"allItems": True},
+                "shopifyInput": mutation_args["basicCodeDiscount"], "warnings": warnings, **token}
+
+    async def update_discount_code_items(self, args: dict[str, Any]) -> dict[str, Any]:
+        _, _, mutation_args, _ = await self._discount_code_items_state(args)
+        self._require_write(args, "shopify_update_discount_code_items", mutation_args)
+        query = f"""mutation DiscountCodeItems($id:ID!,$basicCodeDiscount:DiscountCodeBasicInput!){{discountCodeBasicUpdate(id:$id,basicCodeDiscount:$basicCodeDiscount){{codeDiscountNode{{id codeDiscount{{{DISCOUNT_CODE_FRAGMENTS}}}}} userErrors{{field message code}}}}}}"""
+        result = await self.client.graphql(query, mutation_args)
+        return {"success": True, "operation": "discountCodeBasicUpdate", **mutation_result(result, "discountCodeBasicUpdate")}
+
     @staticmethod
     def _page_input(args: dict[str, Any]) -> dict[str, Any]:
         fields = ("title", "handle", "body", "isPublished", "publishDate", "templateSuffix", "redirectNewHandle")
@@ -991,7 +1337,7 @@ class ShopifyOperations:
         ids: list[str] = []
         item_ids: list[str] = []
         def visit(nodes: list[dict[str, Any]], depth: int) -> None:
-            if depth > 3:
+            if depth > 3 and nodes:
                 raise ValueError("Menu aceita no máximo três níveis")
             for item in nodes:
                 resource_id = item.get("resourceId")
@@ -1304,8 +1650,8 @@ class ShopifyOperations:
     async def prepare_collection_create(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=False)
         warnings = _rule_set_warnings(collection_input.get("ruleSet"))
-        if "ruleSet" in collection_input:
-            warnings.insert(0, "A coleção será criada sem publicação; a membership vem da regra informada.")
+        if "ruleSet" in collection_input or "subCollectionIds" in collection_input:
+            warnings.insert(0, "A coleção será criada sem publicação; a membership vem da regra/subcoleções informadas (fontes da API 2026-07).")
         else:
             warnings.insert(0, "A coleção será criada sem publicação e sem fonte de produtos; configure membership e publicação separadamente.")
         token = self.confirmations.issue("shopify_create_collection", collection_input)
@@ -1314,8 +1660,16 @@ class ShopifyOperations:
     async def create_collection(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=False)
         self._require_write(args, "shopify_create_collection", collection_input)
-        query = """mutation CollectionCreate($collection:CollectionCreateInput!){collectionCreate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}} userErrors{field message}}}"""
-        result = await self.client.graphql(query, {"collection": collection_input})
+        payload = {k: v for k, v in collection_input.items() if k not in ("ruleSet", "subCollectionIds")}
+        sources = []
+        if "ruleSet" in collection_input:
+            sources.append(_rule_set_to_source(collection_input["ruleSet"]))
+        if "subCollectionIds" in collection_input:
+            sources.extend(_sub_collections_sources(collection_input["subCollectionIds"]))
+        if sources:
+            payload["sources"] = sources
+        query = f"""mutation CollectionCreate($collection:CollectionCreateInput!){{collectionCreate(collection:$collection){{collection{{id title descriptionHtml handle sortOrder templateSuffix seo{{title description}} productsCount{{count}} updatedAt {_SOURCES_SELECTION} ruleSet{{appliedDisjunctively rules{{column relation condition}}}}}} userErrors{{field message}}}}}}"""
+        result = await self.client.graphql(query, {"collection": payload})
         return {"success": True, "operation": "collectionCreate", **mutation_result(result, "collectionCreate")}
 
     async def prepare_collection_update(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -1323,29 +1677,52 @@ class ShopifyOperations:
         if not changes:
             raise ValueError("Informe ao menos um campo para alterar")
         warnings = _rule_set_warnings(changes.get("ruleSet"))
-        result = await self.client.graphql("""query CollectionUpdatePreview($id:ID!){collection(id:$id){id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}}}""", {"id": args["id"]})
-        collection = result["data"]["collection"]
-        if collection is None:
-            raise ShopifyError("Coleção não encontrada")
+        collection = await self._collection_for_update(args["id"])
         before = {key: collection.get(key) for key in ("title", "descriptionHtml", "handle", "sortOrder", "templateSuffix", "seo", "ruleSet")}
         grouped = _grouped_condition_warning(before["ruleSet"]) if "ruleSet" in changes else None
         if grouped:
             warnings.insert(0, grouped)
-        if "ruleSet" in changes and before["ruleSet"] is None:
-            warnings.insert(0, "A coleção é manual hoje; ao receber uma regra ela vira automática e a seleção manual de produtos é descartada.")
+        replaced = _sources_to_replace(collection.get("sources"), rules="ruleSet" in changes, sub="subCollectionIds" in changes)
+        if "ruleSet" in changes:
+            has_manual = any(s.get("hasSelections") for s in _source_summary(collection.get("sources")))
+            if before["ruleSet"] is None and not replaced:
+                warnings.insert(0, "A coleção é manual hoje; ganha uma fonte de condições. " + ("Os produtos escolhidos à mão continuam (fonte separada)." if has_manual else "Não há seleção manual."))
+            elif replaced:
+                warnings.insert(0, f"A fonte de condições atual ({len(replaced)}) será substituída pela nova regra.")
+        if "subCollectionIds" in changes:
+            warnings.append("A coleção passa a herdar os produtos das subcoleções informadas; a fonte de subcoleções atual, se houver, é substituída.")
         mutation_input = {"id": args["id"], **changes}
         token = self.confirmations.issue("shopify_update_collection", mutation_input)
-        return {"collection": {"id": collection["id"], "title": collection["title"], "productsCount": collection.get("productsCount"), "sources": collection.get("sources")}, "before": before, "after": {**before, **changes}, "willChange": before_changed(before, {**before, **changes}), **({"warnings": warnings} if warnings else {}), **token}
+        return {"collection": {"id": collection["id"], "title": collection["title"], "productsCount": collection.get("productsCount"), "sources": _source_summary(collection.get("sources"))}, "before": before, "after": {**before, **changes}, "sourcesToReplace": replaced, "willChange": before_changed(before, {**before, **changes}), **({"warnings": warnings} if warnings else {}), **token}
+
+    async def _collection_for_update(self, collection_id: str) -> dict[str, Any]:
+        result = await self.client.graphql(f"""query CollectionUpdatePreview($id:ID!){{collection(id:$id){{id title descriptionHtml handle sortOrder templateSuffix seo{{title description}} productsCount{{count}} {_SOURCES_SELECTION} ruleSet{{appliedDisjunctively rules{{column relation condition}}}}}}}}""", {"id": collection_id})
+        collection = result["data"]["collection"]
+        if collection is None:
+            raise ShopifyError("Coleção não encontrada")
+        return collection
 
     async def update_collection(self, args: dict[str, Any]) -> dict[str, Any]:
         collection_input = _collection_input(args, include_id=True)
         self._require_write(args, "shopify_update_collection", collection_input)
-        query = """mutation CollectionUpdate($collection:CollectionUpdateInput!){collectionUpdate(collection:$collection){collection{id title descriptionHtml handle sortOrder templateSuffix seo{title description} productsCount{count} updatedAt sources{__typename id title} ruleSet{appliedDisjunctively rules{column relation condition}}} job{id done} userErrors{field message}}}"""
-        result = await self.client.graphql(query, {"collection": collection_input})
+        payload = {k: v for k, v in collection_input.items() if k not in ("ruleSet", "subCollectionIds")}
+        if "ruleSet" in collection_input or "subCollectionIds" in collection_input:
+            current = await self._collection_for_update(args["id"])
+            replaced = _sources_to_replace(current.get("sources"), rules="ruleSet" in collection_input, sub="subCollectionIds" in collection_input)
+            create = []
+            if "ruleSet" in collection_input:
+                create.append(_rule_set_to_source(collection_input["ruleSet"]))
+            if "subCollectionIds" in collection_input:
+                create.extend(_sub_collections_sources(collection_input["subCollectionIds"]))
+            payload["sourcesToCreate"] = create
+            if replaced:
+                payload["sourcesToDelete"] = replaced
+        query = f"""mutation CollectionUpdate($collection:CollectionUpdateInput!){{collectionUpdate(collection:$collection){{collection{{id title descriptionHtml handle sortOrder templateSuffix seo{{title description}} productsCount{{count}} updatedAt {_SOURCES_SELECTION} ruleSet{{appliedDisjunctively rules{{column relation condition}}}}}} job{{id done}} userErrors{{field message}}}}}}"""
+        result = await self.client.graphql(query, {"collection": payload})
         return {"success": True, "operation": "collectionUpdate", **mutation_result(result, "collectionUpdate")}
 
     async def prepare_collection_delete(self, args: dict[str, Any]) -> dict[str, Any]:
-        result = await self.client.graphql("""query CollectionDeletePreview($id:ID!){collection(id:$id){id title handle productsCount{count} publications(first:100){nodes{id name}}}}""", {"id": args["id"]})
+        result = await self.client.graphql("""query CollectionDeletePreview($id:ID!){collection(id:$id){id title handle productsCount{count} resourcePublications(first:100){nodes{isPublished publication{id name}}}}}""", {"id": args["id"]})
         collection = result["data"]["collection"]
         if collection is None:
             raise ShopifyError("Coleção não encontrada")
@@ -2170,8 +2547,8 @@ class ShopifyOperations:
         return {"catalog": result["data"]["catalog"]}
 
     async def list_price_lists(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = f"query PriceLists($first:Int!,$after:String,$query:String){{priceLists(first:$first,after:$after,query:$query){{edges{{cursor node{{{self._PRICE_LIST_FIELDS}}}}}pageInfo{{hasNextPage endCursor}}}}}}"
-        result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after"), "query": args.get("query")})
+        query = f"query PriceLists($first:Int!,$after:String){{priceLists(first:$first,after:$after){{edges{{cursor node{{{self._PRICE_LIST_FIELDS}}}}}pageInfo{{hasNextPage endCursor}}}}}}"
+        result = await self.client.graphql(query, {"first": _page_size(args.get("first")), "after": args.get("after")})  # priceLists não aceita query no 2026-07
         return _connection(result["data"], "priceLists")
 
     async def get_price_list(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -2340,9 +2717,9 @@ class ShopifyOperations:
             filters.append(f"query:{json.dumps(args['query'], ensure_ascii=False)}")
         suffix = f"({','.join(filters)})" if filters else ""
         documents = {
-            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} category{{id fullName}} metafields{{edges{{node{{namespace key type value}}}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable requiresComponents selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping}} productVariantComponents{{edges{{node{{quantity productVariant{{id sku title price product{{id title handle}}}}}}}}}}}}}}}}}}}}}}}}",
-            "PRODUCT_VARIANTS": f"{{productVariants{suffix}{{edges{{node{{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale selectedOptions{{name value}} product{{id title handle status}} inventoryItem{{id tracked requiresShipping}}}}}}}}}}",
-            "COLLECTIONS": f"{{collections{suffix}{{edges{{node{{id title handle descriptionHtml sortOrder updatedAt productsCount{{count}} seo{{title description}} ruleSet{{appliedDisjunctively rules{{column relation condition conditionObject{{... on CollectionRuleMetafieldCondition{{metafieldDefinition{{id namespace key}}}}}}}}}}}}}}}}}}",
+            "PRODUCTS": f"{{products{suffix}{{edges{{node{{id title handle descriptionHtml status vendor productType tags createdAt updatedAt totalInventory seo{{title description}} options{{id name position optionValues{{id name hasVariants}}}} category{{id fullName}} metafields{{edges{{node{{namespace key type value}}}}}} variants{{edges{{node{{id title sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable requiresComponents selectedOptions{{name value}} inventoryItem{{id tracked requiresShipping measurement{{weight{{value unit}}}}}} productVariantComponents{{edges{{node{{quantity productVariant{{id sku title price product{{id title handle}}}}}}}}}}}}}}}}}}}}}}}}",
+            "PRODUCT_VARIANTS": f"{{productVariants{suffix}{{edges{{node{{id title displayName sku barcode price compareAtPrice inventoryQuantity inventoryPolicy taxable availableForSale selectedOptions{{name value}} product{{id title handle status productType tags}} inventoryItem{{id tracked requiresShipping measurement{{weight{{value unit}}}}}}}}}}}}}}",
+            "COLLECTIONS": f"{{collections{suffix}{{edges{{node{{id title handle descriptionHtml sortOrder updatedAt productsCount{{count}} seo{{title description}} ruleSet{{appliedDisjunctively rules{{column relation condition conditionObject{{... on CollectionRuleMetafieldCondition{{metafieldDefinition{{id namespace key}}}}}}}}}} products{{edges{{node{{id handle status}}}}}}}}}}}}}}",
             "ORDERS": f"{{orders{suffix}{{edges{{node{{id name createdAt processedAt cancelledAt displayFinancialStatus currencyCode subtotalPriceSet{{shopMoney{{amount}}}} totalShippingPriceSet{{shopMoney{{amount}}}} totalDiscountsSet{{shopMoney{{amount}}}} currentTotalPriceSet{{shopMoney{{amount}}}} totalRefundedSet{{shopMoney{{amount}}}} discountCodes customAttributes{{key value}} lineItems{{edges{{node{{id discountAllocations{{allocatedAmountSet{{shopMoney{{amount}}}} discountApplication{{__typename value{{__typename ... on MoneyV2{{amount}} ... on PricingPercentageValue{{percentage}}}} ... on DiscountCodeApplication{{code}} ... on AutomaticDiscountApplication{{title}} ... on ManualDiscountApplication{{title}} ... on ScriptDiscountApplication{{title}}}}}}}}}}}}}}}}}}}}",
             "CUSTOMERS": f"{{customers{suffix}{{edges{{node{{id firstName lastName displayName email phone tags state createdAt updatedAt numberOfOrders amountSpent{{amount currencyCode}} defaultAddress{{id address1 address2 city provinceCode countryCodeV2 zip}}}}}}}}}}",
             "INVENTORY_ITEMS": f"{{inventoryItems{suffix}{{edges{{node{{id sku tracked requiresShipping createdAt updatedAt variant{{id title product{{id}}}} inventoryLevels{{edges{{node{{id location{{id name}} quantities(names:[\"available\",\"on_hand\",\"committed\",\"reserved\",\"incoming\",\"damaged\",\"safety_stock\",\"quality_control\"]){{name quantity}}}}}}}}}}}}}}}}",

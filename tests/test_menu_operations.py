@@ -23,6 +23,15 @@ def test_menu_resource_type_must_match_gid():
         ShopifyOperations._menu_resource_ids(items)
 
 
+def test_menu_accepts_three_levels_with_empty_leaf_items():
+    leaf = {"title": "C", "type": "HTTP", "url": "/c", "items": []}
+    items = [{"title": "A", "type": "HTTP", "url": "/a", "items": [{"title": "B", "type": "HTTP", "url": "/b", "items": [leaf]}]}]
+    assert ShopifyOperations._menu_resource_ids(items) == []
+    leaf["items"] = [{"title": "D", "type": "HTTP", "url": "/d", "items": []}]
+    with pytest.raises(ValueError, match="três níveis"):
+        ShopifyOperations._menu_resource_ids(items)
+
+
 @pytest.mark.asyncio
 async def test_menu_create_token_binds_complete_tree():
     client = SequenceClient([{"data": {"menus": {"nodes": []}}}])

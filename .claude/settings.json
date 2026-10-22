@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__shopify-write__shopify_prepare_product_option_update",
+      "mcp__shopify-write__shopify_product_option_update"
+    ]
+  }
+}

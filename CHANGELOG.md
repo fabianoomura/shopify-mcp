@@ -2,7 +2,52 @@
 
 ## Não lançado
 
+### Corrigido
+- **Coleções automáticas na API 2026-07:** `ruleSet` saiu de `CollectionCreateInput`/`CollectionUpdateInput`
+  (a Shopify recusava com "Field is not defined"). As tools de coleção continuam aceitando `ruleSet` no formato
+  clássico e o MCP converte para uma **fonte de condições** (`sources`/`sourcesToCreate`): TAG → `productTag`
+  `TAGGED_WITH`/`NOT_TAGGED_WITH`, NOT_CONTAINS → `DOES_NOT_CONTAIN`, `appliedDisjunctively` → `matchType` ANY/ALL,
+  preço em `MoneyInput` BRL. Na atualização, a fonte de condições atual é apagada e recriada; a fonte só de
+  seleções manuais é preservada e o MCP recusa apagar fonte que mistura condições e seleções.
+  Saíram `IS_PRICE_REDUCED` (use `VARIANT_COMPARE_AT_PRICE IS_SET`) e `PRODUCT_TAXONOMY_NODE_ID`.
+  Condições negativas (`NOT_EQUALS`, `NOT_CONTAINS`, tag negada) vão com `matchType: ALL` — a Shopify
+  recusa ANY nelas ("Match type must be ALL when relation is not_contains").
+- **Cupons (`list_code_discounts`, `get_code_discount`, `get_code_discount_by_code`):** o fragmento tinha uma
+  `}` sobrando e a Shopify devolvia `PARSE_ERROR`. Teste novo confere o balanço das chaves.
+- **`list_price_lists`:** `priceLists` não aceita `query` no 2026-07 (`argumentNotAccepted`); o argumento foi retirado.
+- **Menus com 3 níveis:** o validador contava a lista `items: []` das folhas do 3º nível como um 4º nível
+  e recusava todo menu de 3 níveis ("Menu aceita no máximo três níveis"). Agora só recusa se houver itens no 4º.
+- **`prepare_collection_delete`:** o preview pedia `publications{nodes{id name}}`, que não existe em
+  `CollectionPublication` no 2026-07 (a tool falhava sempre). Agora usa
+  `resourcePublications{nodes{isPublished publication{id name}}}`.
+
 ### Adicionado
+- **Descontos automáticos (Compre X Ganhe Y):** `shopify_list_automatic_discounts` e `shopify_get_automatic_discount`
+  (leitura); `shopify_prepare_discount_automatic_bxgy_create` → `shopify_create_discount_automatic_bxgy`
+  (`discountAutomaticBxgyCreate`; ex.: 3x2 = `buysQuantity:2` + `getsQuantity:1` + `getsPercentage:1`, por
+  produtos ou coleções); ativar/desativar (`discountAutomaticActivate/Deactivate`) e excluir
+  (`discountAutomaticDelete`) com prepare→apply. O preview resolve os GIDs (com nº de produtos da coleção) e avisa
+  título repetido, `productDiscounts` desligado (promos de grupos diferentes não somam no carrinho) e repetição
+  sem `usesPerOrderLimit`. Pedido para o 3x2 da loja Barcelona. Validado ao vivo em 20/10/2026 (5 promos 3x2 na BCN).
+- **Datas de descontos em lote:** `shopify_prepare_discount_dates_update` → `shopify_update_discount_dates`, até 100
+  cupons (`DiscountCodeNode`) e/ou descontos automáticos (`DiscountAutomaticNode`) por vez, com before/after por item.
+  Detecta o tipo (Basic/Bxgy/FreeShipping/App) e chama o `discount*Update` certo enviando só `startsAt`/`endsAt`.
+  `endsAt` = agora desativa em lote; `endsAt: null` tira a data de fim. Falhas são reportadas por ID sem
+  interromper o resto. Recusa `endsAt` anterior ao `startsAt` atual de qualquer item.
+- **Alvo de cupom:** `shopify_prepare_discount_code_items_update` → `shopify_update_discount_code_items` trocam onde um
+  cupom percentual/valor (`DiscountCodeBasic`) vale: todos, produtos ou coleções. O preview lê o alvo atual e
+  manda só o diff (`add`/`remove`); valor, público, vigência e combinações não mudam. Recusa quando o alvo atual
+  tem 20+ itens (o preview não enxergaria todos). As leituras de cupom passam a mostrar `customerGets.items`.
+- **Regras por metafield de lista** (`METAFIELD_STRING_LIST`, `METAFIELD_METAOBJECT_LIST` + `definitionId`):
+  ex. tema (`custom.tema`) e cor (`custom.cor`) em coleções automáticas.
+- **Peso no bulk export:** `PRODUCTS` e `PRODUCT_VARIANTS` trazem `inventoryItem.measurement.weight` por variante
+  (e `PRODUCT_VARIANTS` traz `productType`/`tags` do produto), para auditar peso por família e tamanho de uma vez.
+- **Bulk export `COLLECTIONS` com produtos:** cada coleção traz `products{id handle status}` (linhas filhas com
+  `__parentId`), para auditar membership em massa (ex.: se a coleção-mãe do menu contém todas as filhas).
+- **Subcoleções em blocos de 10:** a Shopify aceita no máximo 10 coleções por fonte de subcoleções (testado:
+  10 ok, 11 "Too many sub-collections"). O MCP divide `subCollectionIds` em várias fontes de até 10.
+- **`subCollectionIds`** em criar/atualizar coleção: fonte de **subcoleções** — a coleção-mãe herda os produtos
+  das coleções informadas (níveis de cima do menu puxando os de baixo).
 - **`shopify_list_orders_attribution` (leitura, todos os perfis):** pedidos com os campos da atribuição de
   marketing — valor, estorno, status, `sourceName`/app (loja, rascunho, TikTok), `clientIp` e
   `customerJourneySummary` (primeira/última visita com UTMs, página de entrada, nº de momentos).
@@ -56,9 +101,11 @@
 ### Segurança
 - `prepare_bulk_export`/`start_bulk_export` disponíveis no perfil `catalog`. Export de **`ORDERS`**
   liberado no `catalog` (query sem PII); **`CUSTOMERS`** segue restrito ao perfil `full`.
+- Escritas de **desconto automático**, **datas de descontos** e **alvo de cupom** liberadas no `catalog` (gestão
+  de promoção); criar/excluir/ativar cupom (`discount_code_*`) segue em `orders`/`full`.
 
 ### Notas
-- Total de tools: **221** (74 leituras, 73 preparações, 74 aplicações).
+- Total de tools: **238** (77 leituras, 80 preparações, 81 aplicações).
 - Exige **reiniciar o cliente MCP** para os servidores recarregarem o código.
 
 ## 1.18.0 — 2026-07-31

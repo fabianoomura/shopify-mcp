@@ -61,10 +61,15 @@ async def test_product_membership_rejects_same_collection_join_and_leave_without
 RULE_SET_AND = {"appliedDisjunctively": False, "rules": [{"column": "TAG", "relation": "EQUALS", "condition": "roupa_de_cama"}]}
 
 
+COND_SOURCE = {"__typename": "CollectionConditionsSource", "id": "gid://shopify/CollectionConditionsSource/9", "title": "Regras", "inclusion": {"matchType": "ALL", "conditions": [{"__typename": "CollectionSourceInclusionConditionProductTag", "id": "c1"}], "selections": {"nodes": []}}}
+MANUAL_SOURCE = {"__typename": "CollectionConditionsSource", "id": "gid://shopify/CollectionConditionsSource/8", "title": "Manual", "inclusion": {"matchType": None, "conditions": [], "selections": {"nodes": [{"product": {"id": "gid://shopify/Product/5"}}]}}}
+
+
 @pytest.mark.asyncio
-async def test_collection_update_sends_rule_set_and_reads_current_rules():
-    automated = {**COLLECTION, "ruleSet": RULE_SET_AND}
+async def test_collection_update_replaces_condition_source_with_converted_rules():
+    automated = {**COLLECTION, "ruleSet": RULE_SET_AND, "sources": [COND_SOURCE]}
     client = SequenceClient([
+        {"data": {"collection": automated}},
         {"data": {"collection": automated}},
         {"data": {"collectionUpdate": {"collection": automated, "job": {"id": "gid://shopify/Job/1", "done": False}, "userErrors": []}}},
     ])
@@ -72,20 +77,84 @@ async def test_collection_update_sends_rule_set_and_reads_current_rules():
     nova = {"appliedDisjunctively": False, "rules": [
         {"column": "TAG", "relation": "EQUALS", "condition": "roupa_de_cama"},
         {"column": "TAG", "relation": "NOT_EQUALS", "condition": "Estampa adulto"},
+        {"column": "TITLE", "relation": "NOT_CONTAINS", "condition": "Jogo"},
     ]}
     payload = {"id": COLLECTION["id"], "ruleSet": nova}
     proposal = await ops.prepare_collection_update(payload)
     assert proposal["before"]["ruleSet"] == RULE_SET_AND
-    assert proposal["after"]["ruleSet"] == nova
-    assert proposal["willChange"] is True
-    assert any("assíncrona" in w for w in proposal["warnings"])
-    assert not any("ATENÇÃO" in w for w in proposal["warnings"])
-    preview_query, _ = client.calls[0]
-    assert "ruleSet{appliedDisjunctively rules{column relation condition}}" in preview_query
+    assert proposal["sourcesToReplace"] == [COND_SOURCE["id"]]
+    assert any("substituída" in w for w in proposal["warnings"])
     await ops.update_collection({**payload, "confirmationToken": proposal["confirmationToken"]})
     query, variables = client.calls[-1]
-    assert "CollectionUpdateInput!" in query
-    assert variables == {"collection": {"id": COLLECTION["id"], "ruleSet": nova}}
+    assert "CollectionUpdateInput!" in query and "ruleSet" not in variables["collection"]
+    sent = variables["collection"]
+    assert sent["sourcesToDelete"] == [COND_SOURCE["id"]]
+    inclusion = sent["sourcesToCreate"][0]["source"]["inclusion"]
+    assert inclusion["matchType"] == "ALL"
+    assert inclusion["conditions"] == [
+        {"productTag": {"relation": "TAGGED_WITH", "values": ["roupa_de_cama"], "matchType": "ANY"}},
+        {"productTag": {"relation": "NOT_TAGGED_WITH", "values": ["Estampa adulto"], "matchType": "ALL"}},
+        {"productTitle": {"relation": "DOES_NOT_CONTAIN", "values": ["Jogo"], "matchType": "ALL"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_collection_update_on_manual_collection_keeps_selection_source():
+    manual = {**COLLECTION, "ruleSet": None, "sources": [MANUAL_SOURCE]}
+    client = SequenceClient([{"data": {"collection": manual}}, {"data": {"collection": manual}}, {"data": {"collectionUpdate": {"collection": manual, "job": None, "userErrors": []}}}])
+    ops = ShopifyOperations(client)
+    payload = {"id": COLLECTION["id"], "ruleSet": {"appliedDisjunctively": False, "rules": [{"column": "TYPE", "relation": "EQUALS", "condition": "Adesivo de Interruptor"}]}}
+    proposal = await ops.prepare_collection_update(payload)
+    assert proposal["sourcesToReplace"] == []
+    assert "continuam" in proposal["warnings"][0]
+    await ops.update_collection({**payload, "confirmationToken": proposal["confirmationToken"]})
+    sent = client.calls[-1][1]["collection"]
+    assert "sourcesToDelete" not in sent
+    assert sent["sourcesToCreate"][0]["source"]["inclusion"]["conditions"] == [{"productType": {"relation": "EQUALS", "values": ["Adesivo de Interruptor"], "matchType": "ANY"}}]
+
+
+@pytest.mark.asyncio
+async def test_collection_update_refuses_to_drop_condition_source_with_manual_picks():
+    mixed = {**COND_SOURCE, "inclusion": {**COND_SOURCE["inclusion"], "selections": {"nodes": [{"product": {"id": "gid://shopify/Product/5"}}]}}}
+    client = SequenceClient([{"data": {"collection": {**COLLECTION, "ruleSet": RULE_SET_AND, "sources": [mixed]}}}])
+    with pytest.raises(ValueError, match="escolhidos à mão"):
+        await ShopifyOperations(client).prepare_collection_update({"id": COLLECTION["id"], "ruleSet": RULE_SET_AND})
+
+
+@pytest.mark.asyncio
+async def test_collection_create_with_sub_collections_and_metafield_rule():
+    client = SequenceClient([{"data": {"collectionCreate": {"collection": COLLECTION, "userErrors": []}}}])
+    ops = ShopifyOperations(client)
+    payload = {"title": "Cozinha", "subCollectionIds": ["gid://shopify/Collection/2", "gid://shopify/Collection/3"],
+               "ruleSet": {"appliedDisjunctively": True, "rules": [{"column": "METAFIELD_STRING_LIST", "relation": "EQUALS", "condition": "Floral", "definitionId": "gid://shopify/MetafieldDefinition/7"}, {"column": "VARIANT_COMPARE_AT_PRICE", "relation": "IS_SET", "condition": ""}]}}
+    proposal = await ops.prepare_collection_create(payload)
+    await ops.create_collection({**payload, "confirmationToken": proposal["confirmationToken"]})
+    sent = client.calls[-1][1]["collection"]
+    assert "ruleSet" not in sent and "subCollectionIds" not in sent
+    source, sub = sent["sources"]
+    assert source["source"]["inclusion"]["matchType"] == "ANY"
+    assert source["source"]["inclusion"]["conditions"] == [
+        {"metafieldStringList": {"definitionId": "gid://shopify/MetafieldDefinition/7", "relation": "INCLUDES", "values": ["Floral"], "matchType": "ANY"}},
+        {"variantCompareAtPrice": {"relation": "IS_SET"}},
+    ]
+    assert sub == {"subCollections": {"title": "Subcoleções (MCP)", "collectionIds": ["gid://shopify/Collection/2", "gid://shopify/Collection/3"]}}
+
+
+def test_sub_collections_split_in_sources_of_ten():
+    from shopify_mcp.operations import _sub_collections_sources
+    ids = [f"gid://shopify/Collection/{n}" for n in range(13)]
+    first, second = _sub_collections_sources(ids)
+    assert first["subCollections"]["collectionIds"] == ids[:10]
+    assert second["subCollections"]["collectionIds"] == ids[10:]
+    assert second["subCollections"]["title"] == "Subcoleções (MCP) 2/2"
+
+
+@pytest.mark.asyncio
+async def test_metafield_rule_requires_definition_id_without_api_call():
+    client = SequenceClient([])
+    with pytest.raises(ValueError, match="definitionId"):
+        await ShopifyOperations(client).prepare_collection_create({"title": "x", "ruleSet": {"appliedDisjunctively": False, "rules": [{"column": "METAFIELD_STRING_LIST", "relation": "EQUALS", "condition": "Floral"}]}})
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -152,7 +221,7 @@ async def test_collection_update_warns_when_manual_collection_becomes_automated(
 
 
 @pytest.mark.asyncio
-async def test_collection_create_accepts_rule_set():
+async def test_collection_create_converts_rule_set_to_conditions_source():
     created = {**COLLECTION, "ruleSet": RULE_SET_AND}
     client = SequenceClient([{"data": {"collectionCreate": {"collection": created, "userErrors": []}}}])
     ops = ShopifyOperations(client)
@@ -161,7 +230,7 @@ async def test_collection_create_accepts_rule_set():
     assert "membership vem da regra" in proposal["warnings"][0]
     await ops.create_collection({**payload, "confirmationToken": proposal["confirmationToken"]})
     _, variables = client.calls[-1]
-    assert variables == {"collection": payload}
+    assert variables == {"collection": {"title": "Automática", "sources": [{"source": {"title": "Condições (MCP)", "inclusion": {"matchType": "ALL", "conditions": [{"productTag": {"relation": "TAGGED_WITH", "values": ["roupa_de_cama"], "matchType": "ANY"}}]}}}]}}
 
 
 def test_collection_tools_expose_rule_set_schema():

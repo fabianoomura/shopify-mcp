@@ -16,3 +16,7 @@ docs/RUNBOOK_lancamento.md
 docs/RUNBOOK_tags_campanha.md
 scripts/
 .claude/settings.local.json
+
+# credenciais de outras lojas (nunca commitar)
+dados.bcn
+*.bcn

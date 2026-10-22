@@ -26,6 +26,15 @@ def test_bulk_documents_are_curated_and_escape_search_input():
     assert "productVariantComponents{edges{node{quantity productVariant{id sku title price product{id title handle}}}}}" in document
 
 
+def test_bulk_product_and_variant_documents_include_weight():
+    for resource in ("PRODUCTS", "PRODUCT_VARIANTS"):
+        document = ShopifyOperations._bulk_export_document({"resource": resource})
+        assert "inventoryItem{id tracked requiresShipping measurement{weight{value unit}}}" in document
+        assert document.count("{") == document.count("}")
+    variants = ShopifyOperations._bulk_export_document({"resource": "PRODUCT_VARIANTS"})
+    assert "product{id title handle status productType tags}" in variants
+
+
 def test_bulk_metaobjects_require_type_and_reject_it_elsewhere():
     with pytest.raises(ValueError, match="obrigatório"):
         ShopifyOperations._bulk_export_document({"resource": "METAOBJECTS"})

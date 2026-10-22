@@ -155,16 +155,21 @@ INVENTORY_TOGGLE_FIELDS = {
     }},
 }
 COLLECTION_ID = {"type": "string", "pattern": "^gid://shopify/Collection/[0-9]+$"}
-COLLECTION_RULE_COLUMNS = ["TAG", "TITLE", "TYPE", "VENDOR", "VARIANT_TITLE", "VARIANT_PRICE", "VARIANT_COMPARE_AT_PRICE", "VARIANT_INVENTORY", "VARIANT_WEIGHT", "IS_PRICE_REDUCED", "PRODUCT_TAXONOMY_NODE_ID", "PRODUCT_CATEGORY_ID", "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS"]
+COLLECTION_RULE_COLUMNS = ["TAG", "TITLE", "TYPE", "VENDOR", "VARIANT_TITLE", "VARIANT_PRICE", "VARIANT_COMPARE_AT_PRICE", "VARIANT_INVENTORY", "VARIANT_WEIGHT", "PRODUCT_CATEGORY_ID", "PRODUCT_CATEGORY_ID_WITH_DESCENDANTS", "METAFIELD_STRING_LIST", "METAFIELD_METAOBJECT_LIST"]
 COLLECTION_RULE_RELATIONS = ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "STARTS_WITH", "ENDS_WITH", "CONTAINS", "NOT_CONTAINS", "IS_SET", "IS_NOT_SET"]
-COLLECTION_RULE_SET = {"type": "object", "additionalProperties": False, "required": ["appliedDisjunctively", "rules"], "properties": {
+COLLECTION_RULE_SET = {"type": "object", "additionalProperties": False, "required": ["appliedDisjunctively", "rules"],
+    "description": "Regras no formato clássico; o MCP converte para uma fonte de condições (sources, API 2026-07). METAFIELD_* exigem definitionId e usam relation EQUALS (= a lista inclui o valor).",
+    "properties": {
     "appliedDisjunctively": {"type": "boolean", "description": "false = todas as condições (E); true = qualquer condição (OU)."},
     "rules": {"type": "array", "minItems": 1, "maxItems": 60, "items": {"type": "object", "additionalProperties": False, "required": ["column", "relation", "condition"], "properties": {
         "column": {"type": "string", "enum": COLLECTION_RULE_COLUMNS},
         "relation": {"type": "string", "enum": COLLECTION_RULE_RELATIONS},
         "condition": {"type": "string", "maxLength": 255},
+        "definitionId": {"type": "string", "pattern": "^gid://shopify/MetafieldDefinition/[0-9]+$", "description": "Só para METAFIELD_*: GID da definição do metafield."},
     }}},
 }}
+COLLECTION_SUB_IDS = {"type": "array", "minItems": 1, "maxItems": 250, "uniqueItems": True, "items": {"type": "string", "pattern": "^gid://shopify/Collection/[0-9]+$"},
+    "description": "Coleção-mãe: os produtos vêm destas coleções (fonte de subcoleções). Substitui a fonte de subcoleções atual."}
 COLLECTION_BASE_FIELDS = {
     "title": {"type": "string", "minLength": 1, "maxLength": 255},
     "descriptionHtml": {"type": "string", "maxLength": 1000000},
@@ -173,6 +178,7 @@ COLLECTION_BASE_FIELDS = {
     "sortOrder": {"type": "string", "enum": ["ALPHA_ASC", "ALPHA_DESC", "BEST_SELLING", "CREATED", "CREATED_DESC", "MANUAL", "PRICE_ASC", "PRICE_DESC"]},
     "templateSuffix": {"type": ["string", "null"], "maxLength": 255},
     "ruleSet": COLLECTION_RULE_SET,
+    "subCollectionIds": COLLECTION_SUB_IDS,
 }
 ORDER_ID = {"type": "string", "pattern": "^gid://shopify/Order/[0-9]+$"}
 ORDER_UPDATE_FIELDS = {
@@ -275,6 +281,35 @@ DISCOUNT_BASIC_FIELDS = {
     "usageLimit": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000000000},
     "appliesOncePerCustomer": {"type": "boolean"}, "combinesWith": DISCOUNT_COMBINES,
 }
+AUTOMATIC_DISCOUNT_ID = {"type": "string", "pattern": "^gid://shopify/DiscountAutomaticNode/[0-9]+$"}
+DISCOUNT_BXGY_FIELDS = {
+    "title": {"type": "string", "minLength": 1, "maxLength": 255},
+    "startsAt": {"type": "string", "format": "date-time"}, "endsAt": {"type": ["string", "null"], "format": "date-time"},
+    "buysQuantity": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Quantidade que o cliente precisa comprar (3x2 = 2)."},
+    "buysMinimumAmount": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$", "description": "Alternativa a buysQuantity: valor mínimo comprado."},
+    "buysTargetType": {"type": "string", "enum": ["PRODUCTS", "COLLECTIONS"]},
+    "buysProductIds": {"type": "array", "minItems": 1, "maxItems": 250, "uniqueItems": True, "items": PRODUCT_ID},
+    "buysCollectionIds": {"type": "array", "minItems": 1, "maxItems": 250, "uniqueItems": True, "items": COLLECTION_ID},
+    "getsQuantity": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Quantidade que o cliente ganha com desconto (3x2 = 1)."},
+    "getsPercentage": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "Desconto nos itens ganhos; 1 = grátis."},
+    "getsTargetType": {"type": "string", "enum": ["PRODUCTS", "COLLECTIONS"]},
+    "getsProductIds": {"type": "array", "minItems": 1, "maxItems": 250, "uniqueItems": True, "items": PRODUCT_ID},
+    "getsCollectionIds": {"type": "array", "minItems": 1, "maxItems": 250, "uniqueItems": True, "items": COLLECTION_ID},
+    "usesPerOrderLimit": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000, "description": "Máximo de aplicações por pedido; omitir = repete."},
+    "combinesWith": DISCOUNT_COMBINES,
+}
+DISCOUNT_DATES_FIELDS = {
+    "ids": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": True, "items": {"type": "string", "pattern": "^gid://shopify/Discount(Code|Automatic)Node/[0-9]+$"}, "description": "Cupons (DiscountCodeNode) e/ou descontos automáticos (DiscountAutomaticNode)."},
+    "startsAt": {"type": "string", "format": "date-time"},
+    "endsAt": {"type": ["string", "null"], "format": "date-time", "description": "null remove a data de fim; agora/passado encerra o desconto."},
+}
+DISCOUNT_ITEMS_FIELDS = {
+    "id": {"type": "string", "pattern": "^gid://shopify/DiscountCodeNode/[0-9]+$"},
+    "targetType": {"type": "string", "enum": ["ALL", "PRODUCTS", "COLLECTIONS"]},
+    "productIds": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": True, "items": PRODUCT_ID},
+    "collectionIds": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": True, "items": COLLECTION_ID},
+}
+DISCOUNT_BXGY_REQUIRED = ["title", "startsAt", "buysTargetType", "getsQuantity", "getsPercentage", "getsTargetType", "combinesWith"]
 DISCOUNT_BASIC_REQUIRED = ["title", "code", "startsAt", "valueType", "targetType", "audienceType", "minimumType", "appliesOncePerCustomer", "combinesWith"]
 PAGE_ID = {"type": "string", "pattern": "^gid://shopify/Page/[0-9]+$"}
 PAGE_FIELDS = {
@@ -529,6 +564,18 @@ DEFINITIONS = [
     ToolDefinition(_tool("shopify_set_discount_code_status", "ESCRITA: ativa ou desativa cupom conforme confirmação; a Shopify pode ajustar startsAt/endsAt.", {"id": {"type": "string", "pattern": "^gid://shopify/DiscountCodeNode/[0-9]+$"}, "action": {"type": "string", "enum": ["ACTIVATE", "DEACTIVATE"]}, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["id", "action", "confirmationToken"], write=True), "set_discount_code_status", "discounts", True, frozenset({"orders", "full"})),
     ToolDefinition(_tool("shopify_prepare_discount_code_delete", "Prepara exclusão definitiva do cupom e mostra uso acumulado e configuração.", {"id": {"type": "string", "pattern": "^gid://shopify/DiscountCodeNode/[0-9]+$"}}, ["id"]), "prepare_discount_code_delete", "discounts", False, frozenset({"orders", "full"})),
     ToolDefinition(_tool("shopify_delete_discount_code", "ESCRITA DESTRUTIVA: exclui definitivamente o cupom previamente confirmado.", {"id": {"type": "string", "pattern": "^gid://shopify/DiscountCodeNode/[0-9]+$"}, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["id", "confirmationToken"], write=True, destructive=True), "delete_discount_code", "discounts", True, frozenset({"orders", "full"})),
+    ToolDefinition(_tool("shopify_list_automatic_discounts", "Lista descontos automáticos (Compre X Ganhe Y, básico, frete, app) com status, vigência, combinações e alvos.", SEARCH_PAGE), "list_automatic_discounts", "discounts"),
+    ToolDefinition(_tool("shopify_get_automatic_discount", "Obtém um desconto automático pelo DiscountAutomaticNode GID.", {"id": AUTOMATIC_DISCOUNT_ID}, ["id"]), "get_automatic_discount", "discounts"),
+    ToolDefinition(_tool("shopify_prepare_discount_automatic_bxgy_create", "Valida e prepara desconto automático Compre X Ganhe Y (ex.: 3x2 = compra 2, ganha 1 a 100%) por produtos ou coleções.", DISCOUNT_BXGY_FIELDS, DISCOUNT_BXGY_REQUIRED), "prepare_discount_automatic_bxgy_create", "discounts", False, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_create_discount_automatic_bxgy", "ESCRITA: cria o desconto automático Compre X Ganhe Y previamente validado e confirmado.", {**DISCOUNT_BXGY_FIELDS, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, [*DISCOUNT_BXGY_REQUIRED, "confirmationToken"], write=True), "create_discount_automatic_bxgy", "discounts", True, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_prepare_discount_automatic_status_change", "Mostra o efeito de ativar ou desativar um desconto automático.", {"id": AUTOMATIC_DISCOUNT_ID, "action": {"type": "string", "enum": ["ACTIVATE", "DEACTIVATE"]}}, ["id", "action"]), "prepare_discount_automatic_status_change", "discounts", False, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_set_discount_automatic_status", "ESCRITA: ativa ou desativa desconto automático conforme confirmação.", {"id": AUTOMATIC_DISCOUNT_ID, "action": {"type": "string", "enum": ["ACTIVATE", "DEACTIVATE"]}, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["id", "action", "confirmationToken"], write=True), "set_discount_automatic_status", "discounts", True, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_prepare_discount_automatic_delete", "Prepara exclusão definitiva de desconto automático e mostra a configuração.", {"id": AUTOMATIC_DISCOUNT_ID}, ["id"]), "prepare_discount_automatic_delete", "discounts", False, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_delete_discount_automatic", "ESCRITA DESTRUTIVA: exclui definitivamente o desconto automático previamente confirmado.", {"id": AUTOMATIC_DISCOUNT_ID, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["id", "confirmationToken"], write=True, destructive=True), "delete_discount_automatic", "discounts", True, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_prepare_discount_dates_update", "Prepara alteração de início/fim de vários cupons e descontos automáticos de uma vez (até 100), com before/after; endsAt agora = desativar em lote.", DISCOUNT_DATES_FIELDS, ["ids"]), "prepare_discount_dates_update", "discounts", False, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_update_discount_dates", "ESCRITA: aplica as datas confirmadas a cada desconto; falhas individuais são reportadas por ID.", {**DISCOUNT_DATES_FIELDS, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["ids", "confirmationToken"], write=True), "update_discount_dates", "discounts", True, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_prepare_discount_code_items_update", "Prepara troca do alvo de um cupom percentual/valor (todos, produtos ou coleções) mostrando alvo atual e novo; o resto do cupom não muda.", DISCOUNT_ITEMS_FIELDS, ["id", "targetType"]), "prepare_discount_code_items_update", "discounts", False, frozenset({"catalog", "orders", "full"})),
+    ToolDefinition(_tool("shopify_update_discount_code_items", "ESCRITA: aplica a troca de alvo do cupom confirmada (discountCodeBasicUpdate customerGets.items).", {**DISCOUNT_ITEMS_FIELDS, "confirmationToken": {"type": "string", "minLength": 32, "maxLength": 256}}, ["id", "targetType", "confirmationToken"], write=True), "update_discount_code_items", "discounts", True, frozenset({"catalog", "orders", "full"})),
     ToolDefinition(_tool("shopify_list_pages", "Lista e pesquisa páginas da loja com publicação, SEO e resumo do conteúdo.", SEARCH_PAGE), "list_pages", "content"),
     ToolDefinition(_tool("shopify_get_page", "Obtém uma página com HTML completo, SEO, template e publicação.", {"id": PAGE_ID}, ["id"]), "get_page", "content"),
     ToolDefinition(_tool("shopify_prepare_page_create", "Prepara criação de página; publicação deve ser escolhida explicitamente.", PAGE_FIELDS, ["title", "isPublished"]), "prepare_page_create", "content", False, frozenset({"catalog", "full"})),
