@@ -20,3 +20,9 @@ scripts/
 # credenciais de outras lojas (nunca commitar)
 dados.bcn
 *.bcn
+
+# documentos internos e dados da loja (não publicar)
+docs/AJUSTES_OPCOES_PRODUTO.md
+docs/RELACIONADOS_*.md
+filtros-mooui-atributos.html
+menu_site.xlsx
